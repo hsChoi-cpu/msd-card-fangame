@@ -57,7 +57,7 @@
     randint(min,max) { return Math.floor(this.rng()*(max-min+1))+min; }
     shuffle(arr) { for(let i=arr.length-1;i>0;i--){let j=this.randint(0,i);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
     reset() {
-      this.turn=0;this.serial=0;this.log=[];this.status='PLANNING';this.phase=1;
+      this.turn=0;this.serial=0;this.log=[];this.events=[];this.status='PLANNING';this.phase=1;
       this.allies=HEROES.map(h=>({id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],slots:[]}));
       this.boss={id:'boss',name:'심연의 군주',symbol:'👁️',hp:260,maxHp:260,speed:[3,8],keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
       this.note('전투 시작! 각 캐릭터의 고정 덱으로 보스에 대응하세요.');
@@ -65,6 +65,12 @@
       this.startTurn();
     }
     note(s){this.log.push({turn:this.turn,text:s});}
+    emit(type, data={}) {
+      const event={turn:this.turn,order:++this.serial,type,...data};
+      this.events.push(event);
+      return event;
+    }
+
     getUnit(id){return id==='boss'?this.boss:this.allies.find(u=>u.id===id);}
     kw(unit,id){return unit.keywords[id]?.potency||0;}
     apply(unit,id,application={}) {
@@ -114,6 +120,7 @@
       if(this.status==='WON'||this.status==='LOST')return;
       this.turn++;this.status='PLANNING';this.phase=this.boss.hp<=130?2:1;
       this.note(`──── ${this.turn}턴 시작 / 보스 ${this.phase}페이즈 ────`);
+      this.emit('TURN_START',{turn:this.turn});
       for(const u of [...this.allies,this.boss])this.activatePending(u);
       for(const unit of this.allies){
         unit.slots=unit.hp>0?Array.from({length:2},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null})):[];
@@ -159,18 +166,68 @@
         ['GUARD','EVADE','COUNTER'].includes(c.type)?this.kw(unit,'DEFENSE_UP')-this.kw(unit,'DEFENSE_DOWN'):0;
       return Math.max(0,c.power+typeBonus+this.kw(unit,'POWER_UP')-this.kw(unit,'POWER_DOWN'));
     }
-    runEffects(c,trigger,owner,target,extra={}){
-      if(!c||!c.effects)return;
-      for(const fx of c.effects){
-        if(fx.trigger!==trigger)continue;
-        const dst=fx.target==='TARGET'?target:fx.target==='ATTACKER'?extra.attacker:owner;
-        if(!dst)continue;
-        if(fx.action==='APPLY_KEYWORD')this.apply(dst,fx.keyword,{potency:fx.potency,count:fx.count});
-        if(fx.action==='HEAL'){dst.hp=Math.min(dst.maxHp,dst.hp+(fx.value||0));this.note(`${dst.name}: 체력 +${fx.value}`);}
+    // Effects are declarative: event -> optional conditions -> ordered actions.
+    // Priority: higher first; original order breaks ties, for deterministic replay.
+    effectConditionsMet(conditions,owner,target,extra={}) {
+      return (conditions||[]).every(condition=>{
+        const unit=condition.target==='TARGET'?target:owner;
+        if(!unit)return false;
+        switch(condition.kind){
+          case 'HAS_KEYWORD': return this.kw(unit,condition.keyword)>=(condition.min??1);
+          case 'MISSING_KEYWORD': return this.kw(unit,condition.keyword)===0;
+          case 'HP_AT_MOST_PERCENT': return unit.hp*100<=unit.maxHp*condition.value;
+          case 'HP_AT_LEAST_PERCENT': return unit.hp*100>=unit.maxHp*condition.value;
+          case 'DAMAGE_AT_LEAST': return (extra.hpDamage??0)>=condition.value;
+          default: return false; // Unknown conditions must not silently pass.
+        }
+      });
+    }
+    modifyKeyword(unit,id,change={}) {
+      const current=unit?.keywords[id];
+      if(!current)return;
+      if(change.potency!==undefined)current.potency=Math.max(0,current.potency+change.potency);
+      if(change.count!==undefined && current.count!=null)current.count=Math.max(0,current.count+change.count);
+      if(current.potency===0 || current.count===0){
+        delete unit.keywords[id];
+        if(id==='EVADE')unit.evadeSource=null;
+      }
+      this.note(`${unit.name}: ${K[id]||id} 변경 (위력 ${this.kw(unit,id)}, 횟수 ${unit.keywords[id]?.count??'없음'})`);
+    }
+    executeEffectAction(fx,owner,target,extra={}) {
+      const dst=fx.target==='TARGET'?target:fx.target==='ATTACKER'?extra.attacker:owner;
+      if(!dst)return;
+      if(fx.action==='APPLY_KEYWORD')this.apply(dst,fx.keyword,{potency:fx.potency,count:fx.count});
+      else if(fx.action==='MODIFY_KEYWORD')this.modifyKeyword(dst,fx.keyword,{potency:fx.potency,count:fx.count});
+      else if(fx.action==='REMOVE_KEYWORD'){
+        delete dst.keywords[fx.keyword];
+        if(fx.keyword==='EVADE')dst.evadeSource=null;
+        this.note(`${dst.name}: ${K[fx.keyword]||fx.keyword} 제거`);
+      }else if(fx.action==='HEAL'){
+        if(dst.hp<=0)return; // Healing cannot revive a defeated unit.
+        const amount=Math.max(0,fx.value||0);
+        const healed=Math.min(amount,dst.maxHp-dst.hp);
+        dst.hp+=healed;
+        this.note(`${dst.name}: 체력 +${healed}`);
+      }
+    }
+    runEffects(c,trigger,owner,target,extra={}) {
+      if(!c?.effects)return;
+      const effects=c.effects.map((fx,index)=>({fx,index}))
+        .filter(({fx})=>fx.trigger===trigger)
+        .sort((a,b)=>(b.fx.priority??0)-(a.fx.priority??0)||a.index-b.index);
+      for(const {fx} of effects){
+        if(!this.effectConditionsMet(fx.conditions,owner,target,extra))continue;
+        this.emit('EFFECT_TRIGGERED',{trigger,cardId:c.id,ownerId:owner.id});
+        const actions=fx.actions??[fx];
+        for(const action of actions){
+          // Parent-level target is inherited by actions unless overridden.
+          this.executeEffectAction({...fx,...action},owner,target,extra);
+        }
       }
     }
     activate(c,owner,target){
       this.note(`${owner.name}: [${c.name}] 사용`);
+      this.emit('CARD_USED',{ownerId:owner.id,cardId:c.id,targetId:target?.id??null});
       this.runEffects(c,'ON_USE',owner,target);
       const power=this.finalPower(owner,c);
       if(c.type==='GUARD')this.apply(owner,'SHIELD',{potency:power});
@@ -191,35 +248,63 @@
       const source=owner.evadeSource?.card;
       if(ownPower>=incomingPower){
         this.note(`${owner.name}: 회피 성공 (${ownPower} ≥ ${incomingPower})`);
+        this.emit('EVADE_SUCCESS',{ownerId:owner.id,incomingPower});
         this.runEffects(source,'ON_EVADE_SUCCESS',owner,owner);
         return true;
       }
       this.note(`${owner.name}: 회피 실패 (${ownPower} < ${incomingPower}) → 회피 소멸`);
+      this.emit('EVADE_FAIL',{ownerId:owner.id,incomingPower});
       delete owner.keywords.EVADE;owner.evadeSource=null;
       this.runEffects(source,'ON_EVADE_FAIL',owner,owner);
       return false;
     }
-    dealAttack(attacker,target,c,options={}){
+    reactionCards(unit) {
+      const sources=[unit.evadeSource?.card,unit.counter?.card].filter(Boolean);
+      return sources.filter((card,i)=>sources.findIndex(c=>c.id===card.id)===i);
+    }
+    dealAttack(attacker,target,c,options={}) {
       if(attacker.hp<=0||target.hp<=0)return;
-      // Recalculate on each damage immediately before the hit (after clash-trigger effects).
+      // ON_USE and clash effects have already fired. Recalculate live power
+      // immediately before the damage step, per the agreed combat rule.
+      this.runEffects(c,'BEFORE_ATTACK',attacker,target,{attacker});
       const power=this.finalPower(attacker,c);
-      if(this.evade(target,power)){this.note(`${attacker.name}의 [${c.name}] 공격 무효화`);return;}
+      this.emit('ATTACK_INCOMING',{attackerId:attacker.id,targetId:target.id,cardId:c.id,power});
+      // The target is about to be attacked; pre-hit reactions may change state.
+      for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_ATTACKED',target,attacker,{attacker});
+      if(this.evade(target,power)){
+        this.note(`${attacker.name}의 [${c.name}] 공격 무효화`);
+        this.emit('ATTACK_EVADED',{attackerId:attacker.id,targetId:target.id,cardId:c.id});
+        return;
+      }
+      this.runEffects(c,'BEFORE_DAMAGE',attacker,target,{attacker});
+      // Re-evaluate after BEFORE_DAMAGE effects so they can influence power.
+      const damagePower=this.finalPower(attacker,c);
       const multiplier=Math.max(0,1+0.1*(this.kw(target,'VULNERABLE')-this.kw(target,'PROTECTION')));
-      const damage=Math.max(0,Math.floor(power*multiplier+1e-9));
+      const damage=Math.max(0,Math.floor(damagePower*multiplier+1e-9));
       const shield=this.kw(target,'SHIELD');
       const blocked=Math.min(damage,shield);
       if(blocked){target.keywords.SHIELD.potency-=blocked;if(target.keywords.SHIELD.potency<=0)delete target.keywords.SHIELD;}
       const hpDamage=damage-blocked;
       target.hp=Math.max(0,target.hp-hpDamage);
-      this.note(`${attacker.name} → ${target.name}: [${c.name}] 위력 ${power}, 배율 ${multiplier.toFixed(2)}, 방어막 -${blocked}, 체력 -${hpDamage}`);
-      // ON_HIT is after damage; vulnerability from it applies only to later attacks.
-      this.runEffects(c,'ON_HIT',attacker,target);
+      this.note(`${attacker.name} → ${target.name}: [${c.name}] 위력 ${damagePower}, 배율 ${multiplier.toFixed(2)}, 방어막 -${blocked}, 체력 -${hpDamage}`);
+      this.emit('HIT',{attackerId:attacker.id,targetId:target.id,cardId:c.id,damage,blocked,hpDamage});
+      // ON_HIT occurs AFTER the current hit's damage. Newly applied
+      // vulnerability affects only subsequent damage instances.
+      const extra={attacker,hpDamage,blocked,damage};
+      this.runEffects(c,'ON_HIT',attacker,target,extra);
+      for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_HIT_TAKEN',target,attacker,extra);
+      if(hpDamage>0){
+        this.emit('HP_DAMAGED',{targetId:target.id,amount:hpDamage});
+        for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_DAMAGED',target,attacker,extra);
+      }
+      this.runEffects(c,'AFTER_DAMAGE',attacker,target,extra);
       if(target.hp<=0)this.note(`✦ ${target.name} 전투 불능`);
-      // Counter after a successful hit, even when shield absorbed all damage.
-      if(!options.isCounter&&target.hp>0&&target.counter?.remaining>0){
+      // A hit that deals 0 HP damage through a shield still triggers counter.
+      if(!options.isCounter&&target.hp>0&&attacker.hp>0&&target.counter?.remaining>0){
         const counter=target.counter;
         counter.remaining=0;
         this.note(`${target.name}: 반격 발동 → ${attacker.name}`);
+        this.emit('COUNTER_TRIGGERED',{ownerId:target.id,attackerId:attacker.id});
         this.dealAttack(target,attacker,counter.card,{isCounter:true});
       }
     }
@@ -238,6 +323,7 @@
         // After clash-start effects, recompute for clash.
         const a=this.finalPower(hero,c),b=this.finalPower(boss,intent.card);
         this.note(`⚔ 합 판정 ${hero.name} ${a} : ${b} 보스`);
+        this.emit('CLASH',{allyId:hero.id,allyPower:a,bossPower:b,allyCardId:c.id,bossCardId:intent.card.id,result:a>b?'WIN':a<b?'LOSE':'DRAW'});
         if(a>b){
           this.note('합 승리! 보스의 공격 취소');
           this.runEffects(c,'ON_CLASH_WIN',hero,boss);
@@ -305,6 +391,7 @@
     }
     endTurn(){
       this.note('──── 턴 종료: 키워드 정리 ────');
+      this.emit('TURN_END',{turn:this.turn});
       for(const unit of [...this.allies,this.boss]){
         for(const [id,k] of Object.entries(unit.keywords)){
           if(k.count===null || k.count===undefined){delete unit.keywords[id];continue;}
