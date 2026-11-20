@@ -43,6 +43,9 @@
       <details class="panel combat-report"><summary>전투 기록 확인</summary><div class="report-tools"><button id="copyLog" class="ghost tiny">기록 복사</button></div><div id="combatLog" class="logs" aria-live="polite"></div></details>
     </main>
   </div>
+  <div id="discardChoicePanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="discardChoiceTitle">
+    <div class="panel special-target-dialog"><h2 id="discardChoiceTitle">버릴 카드 선택</h2><p class="muted small">카드 버리기 효과의 대상을 직접 선택합니다. 이미 장착된 카드는 제외됩니다.</p><div id="discardChoiceList" class="special-target-choices"></div></div>
+  </div>
   <div id="specialTargetPanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="specialTargetTitle">
     <div class="panel special-target-dialog"><h2 id="specialTargetTitle">특수 카드 대상 선택</h2><p class="muted small">대상을 선택하면 마력이 소비되고 효과가 즉시 적용됩니다.</p><div id="specialTargetChoices" class="special-target-choices"></div><button type="button" class="ghost" id="cancelSpecialTarget">취소</button></div>
   </div>
