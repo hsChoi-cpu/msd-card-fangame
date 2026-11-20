@@ -41,7 +41,7 @@
     <main id="battleScreen" class="screen hidden">
       <div class="battle-topline"><div><div class="eyebrow">02 / RAID BATTLE</div><h2 id="battleStage">행동 지정 단계</h2><p id="stageHelp" class="small muted">아군 슬롯 → 손패 카드 → 장착된 슬롯을 적 슬롯으로 드래그</p></div><div class="toolbar-buttons"><button id="clearSlot" class="ghost">장착 해제</button><button id="execute" class="primary">⚔ 전투 실행</button><button id="nextTurn" class="primary hidden">다음 턴 →</button><button id="reset" class="ghost">↻ 다시 시작</button></div></div>
 
-      <section class="battle-arena" id="battleArena" aria-label="전투 화면"><svg id="clashConnections" class="clash-connections" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
+      <section class="battle-arena" id="battleArena" aria-label="전투 화면"><div id="allySkillInfo" class="arena-skill-info ally-info" role="tooltip" aria-live="off" aria-hidden="true"></div><div id="enemySkillInfo" class="arena-skill-info enemy-info" role="tooltip" aria-live="off" aria-hidden="true"></div><svg id="clashConnections" class="clash-connections" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
         <div class="arena-side allies-side"><div class="arena-heading"><span>ALLIED PARTY</span><span>아군</span></div><div id="heroes" class="battle-heroes"></div></div>
         <div class="arena-center" aria-hidden="true"><span>VS</span></div>
         <div class="arena-side enemy-side"><div class="arena-heading"><span>RAID BOSS</span><span id="phaseBadge" class="phase">PHASE 1</span></div><div id="intents" class="battle-intents" aria-label="보스 행동 슬롯"></div><div class="boss-portrait"><div class="boss-silhouette"><span>👁</span><strong>심연의 군주</strong></div></div><div class="boss-health"><div class="hp-row"><span>BOSS HP</span><strong id="bossHpText"></strong></div><div class="hp-track"><div id="bossHpBar" class="hp-fill boss-fill"></div></div><div id="bossStatus" class="status-list"></div></div><button id="targetBody" class="body-target">합 연결 해제 · 보스 본체 공격</button></div>
@@ -49,7 +49,7 @@
 
       <section class="battle-bottom">
         <aside class="panel mana-panel"><div class="eyebrow">SELECTED UNIT</div><h2 id="manaTitle">캐릭터 선택</h2><div id="manaDisplay" class="mana-details"></div><div id="deckMeta" class="deck-meta"></div><div id="passiveDisplay" class="passive-details"></div></aside>
-        <section class="panel hand-panel"><div class="section-top"><div><div class="eyebrow">PERSONAL HAND</div><h2 id="handTitle">손패</h2></div></div><div id="hand" class="hand-grid"></div><p class="small muted">카드를 클릭하면 선택한 행동 슬롯에 장착됩니다. 장착한 슬롯을 드래그해 보스 행동 슬롯에 놓으면 합으로 연결됩니다.</p></section>
+        <section class="panel hand-panel"><div class="section-top"><div><div class="eyebrow">PERSONAL HAND</div><h2 id="handTitle">손패</h2></div></div><div id="hand" class="hand-grid"></div><p class="small muted">슬롯에 마우스를 올리면 왼쪽/오른쪽 상단에 스킬 정보가 표시됩니다. 아군 슬롯을 보스 슬롯으로 드래그해 합을 연결할 수 있습니다.</p></section>
       </section>
       <details class="panel combat-report"><summary>전투 기록 확인</summary><div class="report-tools"><button id="copyLog" class="ghost tiny">기록 복사</button></div><div id="combatLog" class="logs" aria-live="polite"></div></details>
     </main>

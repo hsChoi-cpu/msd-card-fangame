@@ -41,6 +41,43 @@
       ? `<img src="${esc(path)}" alt="${esc(card.name)} 카드 일러스트" loading="lazy" />`
       : `<span class="card-art-placeholder" aria-label="이미지 미등록">일러스트 영역</span>`;
   }
+  // Small action slots display only their illustration. Full card details live in
+  // two fixed panels in the arena (never inside another slot or clipping parent).
+  function slotIllustration(card:any, fallback:string):string {
+    const path=typeof card?.image==='string'?card.image.trim():'';
+    const safe=path && !/^(?:[a-z]+:|\/\/)/i.test(path) && !path.includes('..') && /^[\w\u3131-\uD7A3/ .-]+$/.test(path);
+    return safe
+      ? `<img class="action-art-image" src="${esc(path)}" alt="" draggable="false" loading="lazy" />`
+      : `<span class="action-art-empty" aria-hidden="true">${fallback}</span>`;
+  }
+  function showSlotInfo(target:HTMLElement):void {
+    if(!game || screen!=='battle')return;
+    const allyId=target.dataset.slot;
+    const intentId=target.dataset.intent;
+    const panelId=allyId?'allySkillInfo':intentId?'enemySkillInfo':null;
+    if(!panelId)return;
+    const slot=allyId?allSlots().find((x:any)=>x.id===allyId):null;
+    const intent=intentId?game.boss.intents.find((x:any)=>x.id===intentId):null;
+    const owner=allyId?game.getUnit(slot?.ownerId):game.boss;
+    const card=slot?game.cardForSlot(slot):intent?.card;
+    const panel=$(panelId);
+    if(!card){
+      panel.innerHTML=`<div class="skill-info-label">아군 행동 슬롯</div><strong>빈 슬롯</strong><p>손패에서 카드를 선택해 장착할 수 있습니다.</p>`;
+    }else{
+      const value=game.finalPower(owner,card);
+      const speed=slot?.speed??intent?.speed;
+      const cost=allyId?`<span>마력 ${game.manaCost(owner,card)}</span>`:'';
+      const type=`${esc(T[card.type]||card.type)}${card.type==='MULTI_ATTACK'?` · ${Number(card.hitCount)||1}타`:''}`;
+      const link=slot?.targetIntentId?' · 합 연결됨':'';
+      const targetName=intent?game.getUnit(intent.targetId)?.name:null;
+      panel.innerHTML=`<div class="skill-info-label">${allyId?'아군 카드':'보스 카드'} · ${esc(owner.name)}${link}</div><strong>${esc(card.name)}</strong><div class="skill-info-stats"><span>${type}</span><span>위력 ${value}</span><span>속도 ${speed}</span>${cost}</div><p>${esc(card.description||'추가 효과 없음')}</p>${targetName?`<div class="skill-info-target">공격 대상: ${esc(targetName)}</div>`:''}`;
+    }
+    panel.classList.add('visible');panel.setAttribute('aria-hidden','false');
+  }
+  function hideSlotInfo(side:'ally'|'enemy'):void {
+    const panel=$(side==='ally'?'allySkillInfo':'enemySkillInfo');
+    panel.classList.remove('visible');panel.setAttribute('aria-hidden','true');
+  }
   function renderClashLines():void {
     const arena=$('battleArena');
     const svg=$('clashConnections') as unknown as SVGSVGElement;
@@ -129,6 +166,7 @@
   function showScreen(next:'home'|'collection'|'formation'|'battle'){
     if(next!=='battle'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');}
     screen=next;
+    document.body.classList.toggle('battle-active',next==='battle');
     for(const [type,id] of [['home','homeScreen'],['collection','collectionScreen'],['formation','formationScreen'],['battle','battleScreen']])$(id).classList.toggle('hidden',type!==next);
     $('turnBadge').classList.toggle('hidden',next!=='battle');$('backToParty').classList.toggle('hidden',next!=='battle');$('toHome').classList.toggle('hidden',next==='home');
     if(next==='formation')renderFormation();else if(next==='collection')renderCollection();else if(next==='battle')renderBattle();
@@ -152,12 +190,12 @@
     // UI-only sort: never mutate intent IDs, linked slot IDs or execution order.
     $('intents').innerHTML=sortSlotsBySpeed(game.boss.intents).map((x:any,i:number)=>{
       const pair:any=linked.get(x.id);
-      return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="${esc(x.card.name)}에 합 연결"><div class="top"><span>적 슬롯 ${i+1}</span></div><div class="intent-title">${glyph[x.card.type]} ${esc(x.card.name)} <strong>${game.finalPower(game.boss,x.card)}</strong></div><div class="intent-target">대상 ${esc(game.getUnit(x.targetId)?.name||'자신')}</div><div class="intent-tooltip" role="tooltip"><div class="intent-tooltip-heading">${esc(x.card.name)}</div><div class="intent-tooltip-stats"><span>${esc(T[x.card.type]||x.card.type)}</span><span>위력 ${game.finalPower(game.boss,x.card)}</span><span>속도 ${x.speed}</span></div><p>${esc(x.card.description||'별도의 추가 효과가 없는 기본 행동')}</p><div class="intent-tooltip-target">공격 대상: ${esc(game.getUnit(x.targetId)?.name||'자신')}</div></div>${pair?`<div class="intent-link">↔ ${esc(game.getUnit(pair.ownerId).name)}의 슬롯 연결됨</div>`:'<div class="intent-link hint">여기에 아군 슬롯을 드롭</div>'}</div>`;
+      return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="적 슬롯 ${i+1}: ${esc(x.card.name)}, 속도 ${x.speed}, 위력 ${game.finalPower(game.boss,x.card)}"><span class="action-art">${slotIllustration(x.card,'✦')}</span></div></div>`;
     }).join('');
     $('heroes').innerHTML=game.allies.map((u:any,position:number)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''} ${u.hp<=0?'fallen':''}">
       <div class="hero-slots">${sortSlotsBySpeed(u.slots).map((s:any,i:number)=>{
         const c=game.cardForSlot(s),intent=game.boss.intents.find((it:any)=>it.id===s.targetIntentId);
-        return `<div class="ally-action-wrap"><span class="hex-speed ally-hex">${s.speed}</span><button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} title="${c?'적 슬롯으로 드래그하여 합 연결':'클릭하여 손패 표시'}"><span class="mini-slot-name">${c?esc(c.name):`슬롯 ${i+1}`}</span><span class="mini-slot-power">${c?game.finalPower(u,c):'+'}</span><span class="mini-slot-target">${intent?'⚔ 합 연결':c?'행동 준비':'카드 선택'}</span></button></div>`;
+        return `<div class="ally-action-wrap"><span class="hex-speed ally-hex">${s.speed}</span><button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} aria-label="${esc(u.name)} 슬롯 ${i+1}, 속도 ${s.speed}${c?`, ${esc(c.name)}, 위력 ${game.finalPower(u,c)}`:', 카드 미장착'}${intent?', 합 연결됨':''}" title="${c?'보스 슬롯으로 드래그하여 합 연결':'클릭하여 손패 표시'}"><span class="action-art">${c?slotIllustration(c,'◆'):'<span class="action-art-empty" aria-hidden="true">＋</span>'}</span></button></div>`;
       }).join('')}</div>
       <div class="hero-body" role="img" aria-label="${esc(u.name)}"><span class="hero-body-symbol">${esc(u.symbol)}</span><strong>${esc(u.name)}</strong><small>${position+1}번 편성</small></div>
       <div class="hero-health"><div class="hp-track"><div class="hp-fill boss-fill" style="width:${Math.max(0,100*u.hp/u.maxHp)}%"></div></div><span>${u.hp}/${u.maxHp} HP</span></div>
@@ -180,6 +218,9 @@
     $('targetBody').classList.toggle('hidden',!planning);
     $('combatLog').innerHTML=game.log.slice(-120).map((l:any)=>`<div class="log-entry"><span class="stamp">T${l.turn}</span> ${esc(l.text)}</div>`).join('');
     renderDiscardChoice();
+    for(const side of ['ally','enemy'] as const)hideSlotInfo(side);
+    const focused=document.activeElement as HTMLElement;
+    if(focused?.matches?.('[data-slot],[data-intent]'))showSlotInfo(focused);
     scheduleClashLines();
   }
   function renderDiscardChoice():void {
@@ -268,6 +309,26 @@
     if(intent && screen==='battle' && game.status==='PLANNING' && (ev.key==='Enter'||ev.key===' ')){
       ev.preventDefault();connectToIntent(selectedSlotId,intent.dataset.intent!);
     }
+  });
+  const arenaEl=$('battleArena');
+  arenaEl.addEventListener('pointerover',ev=>{
+    const card=(ev.target as HTMLElement).closest<HTMLElement>('[data-slot],[data-intent]');
+    if(card)showSlotInfo(card);
+  });
+  arenaEl.addEventListener('pointerout',ev=>{
+    const card=(ev.target as HTMLElement).closest<HTMLElement>('[data-slot],[data-intent]');
+    if(!card || card.contains(ev.relatedTarget as Node))return;
+    const other=(ev.relatedTarget as HTMLElement|null)?.closest?.('[data-slot],[data-intent]');
+    if(other && arenaEl.contains(other))return;
+    hideSlotInfo(card.hasAttribute('data-slot')?'ally':'enemy');
+  });
+  arenaEl.addEventListener('focusin',ev=>{
+    const card=(ev.target as HTMLElement).closest<HTMLElement>('[data-slot],[data-intent]');
+    if(card)showSlotInfo(card);
+  });
+  arenaEl.addEventListener('focusout',ev=>{
+    const card=(ev.target as HTMLElement).closest<HTMLElement>('[data-slot],[data-intent]');
+    if(card)hideSlotInfo(card.hasAttribute('data-slot')?'ally':'enemy');
   });
   // Native drag & drop of an equipped allied action slot onto a boss action slot.
   document.addEventListener('dragstart',ev=>{

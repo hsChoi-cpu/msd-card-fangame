@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const html=fs.readFileSync('index.html','utf8');
+const ui=fs.readFileSync('src/ui.ts','utf8');
+const css=fs.readFileSync('styles.css','utf8');
+for(const name of ['allySkillInfo','enemySkillInfo','battleArena','clashConnections'])assert.ok(html.includes(`id="${name}"`),name);
+assert.match(ui,/function slotIllustration\(/);
+assert.match(ui,/showSlotInfo\(card\)/);
+assert.match(ui,/arenaEl\.addEventListener\('pointerover'/);
+assert.match(ui,/arenaEl\.addEventListener\('focusin'/);
+assert.match(css,/body\.battle-active\{height:100dvh;overflow:hidden\}/);
+assert.match(css,/body\.battle-active #battleScreen\{display:grid/);
+assert.match(css,/\.battle-arena \.arena-skill-info/);
+assert.match(ui,/data-intent="\$\{esc\(x\.id\)\}"/);
+assert.match(ui,/data-slot="\$\{esc\(s\.id\)\}"/);
+console.log('PASS 11 V6.2 UI structure checks');
