@@ -4,21 +4,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0c1220" />
-  <title>심연 레이드 · 전투 프로토타입</title>
+  <title>마법소녀들의 도시 · 레이드</title>
 
 </head>
 <body>
   <div class="shell">
     <header class="masthead">
-      <div><div class="eyebrow">ABYSS RAID · V5.3 UI PROTOTYPE</div><h1>심연 레이드 <span>TACTICAL CARD RAID</span></h1></div>
-      <div class="header-actions"><span id="turnBadge" class="pill hidden">TURN 1</span><button id="backToParty" class="ghost hidden">← 편성 화면</button></div>
+      <div><div class="eyebrow">MAGICAL GIRLS CITY · RAID PROTOTYPE</div><h1>마법소녀들의 도시 <span>TACTICAL CARD RAID</span></h1></div>
+      <div class="header-actions"><span id="turnBadge" class="pill hidden">TURN 1</span><button id="backToParty" class="ghost hidden">← 편성 화면</button><button id="toHome" class="ghost hidden">⌂ 메인으로</button></div>
     </header>
+
+
+    <main id="homeScreen" class="screen home-screen">
+      <button id="homeSettings" class="home-settings" type="button" aria-label="설정">⚙ 설정</button>
+      <div class="home-center"><div class="home-eyebrow">WELCOME TO</div><h2>마법소녀들의 도시</h2><p>MAGICAL GIRLS CITY</p></div>
+      <nav class="home-nav" aria-label="메인 메뉴"><button id="openCollection" type="button">마법 소녀<span>CHARACTERS</span></button><button id="openFormation" type="button">전투<span>RAID BATTLE</span></button><button id="openCodex" type="button" disabled title="추후 구현">도감 (개발 예정)<span>COMING SOON</span></button></nav>
+    </main>
+    <main id="collectionScreen" class="screen hidden">
+      <div class="collection-heading"><div><div class="eyebrow">CHARACTER ARCHIVE · 27</div><h2>마법 소녀</h2><p class="muted">캐릭터를 선택하면 덱, 능력치, 패시브를 볼 수 있습니다.</p></div><button id="collectionBack" class="ghost">← 메인 화면</button></div>
+      <div class="collection-layout"><section class="collection-grid-shell" aria-label="캐릭터 목록"><div id="collectionCount" class="collection-count"></div><div id="collectionGrid" class="collection-grid"></div></section><aside class="panel collection-filters"><h3>캐릭터 검색</h3><label for="characterSearch">이름 검색</label><input type="search" id="characterSearch" placeholder="이름을 입력하세요" autocomplete="off"/><label for="ownershipFilter">보유 상태</label><select id="ownershipFilter"><option value="all">전체 보기</option><option value="owned">보유 캐릭터</option><option value="locked">미보유 캐릭터</option></select><label for="keywordFilter">사용 키워드</label><select id="keywordFilter"><option value="all">모든 키워드</option></select><button id="clearFilters" class="ghost">필터 초기화</button><div class="filter-help">해금된 캐릭터의 실제 카드 데이터로 키워드를 분류합니다. 상세 데이터가 없는 캐릭터는 <b>준비 중</b>으로 표시됩니다.</div><div id="unlockProgress" class="unlock-progress"></div></aside></div>
+    </main>
 
     <main id="formationScreen" class="screen">
       <section class="panel formation-header">
         <div class="eyebrow">01 / RAID PREPARATION</div>
         <h2>출전 캐릭터 편성</h2>
-        <p class="muted">캐릭터를 선택한 순서가 편성 순서입니다. 숫자로 직접 표시되며 순서 변경 버튼으로 조정할 수 있습니다.</p>
+        <p class="muted">보유 캐릭터 중 최대 6명을 편성합니다. 선택 순서에 따라 행동 슬롯이 배분됩니다.</p>
         <div class="formation-toolbar"><span id="partyCount" class="pill">0 / 6명</span><button id="applyParty" class="primary">레이드 시작 →</button></div>
       </section>
       <div class="formation-columns">
@@ -32,8 +43,8 @@
 
       <section class="battle-arena" id="battleArena" aria-label="전투 화면"><svg id="clashConnections" class="clash-connections" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
         <div class="arena-side allies-side"><div class="arena-heading"><span>ALLIED PARTY</span><span>아군</span></div><div id="heroes" class="battle-heroes"></div></div>
-        <div class="arena-center" aria-hidden="true"><div class="arena-symbol">⚔</div><span>VS</span><p>드래그하여 합 연결</p></div>
-        <div class="arena-side enemy-side"><div class="arena-heading"><span>RAID TARGET</span><span>적</span></div><div class="panel enemy-card"><div class="enemy-title"><div><div class="eyebrow">BOSS</div><h2>◈ 심연의 군주</h2></div><span id="phaseBadge" class="phase">PHASE 1</span></div><div class="boss-visual"><div class="moon"></div><div class="boss-mark">◈</div><div class="rings"></div></div><div class="hp-row"><span>HP</span><strong id="bossHpText"></strong></div><div class="hp-track"><div id="bossHpBar" class="hp-fill boss-fill"></div></div><div id="bossStatus" class="status-list"></div></div><div class="enemy-intents-title">보스 행동 슬롯 <span class="small muted">마우스를 올려 스킬 확인 · 슬롯 드롭으로 합 연결</span></div><div id="intents" class="battle-intents"></div><button id="targetBody" class="body-target">◎ 합 연결 해제 · 보스 본체 공격</button></div>
+        <div class="arena-center" aria-hidden="true"><span>VS</span></div>
+        <div class="arena-side enemy-side"><div class="arena-heading"><span>RAID BOSS</span><span id="phaseBadge" class="phase">PHASE 1</span></div><div id="intents" class="battle-intents" aria-label="보스 행동 슬롯"></div><div class="boss-portrait"><div class="boss-silhouette"><span>👁</span><strong>심연의 군주</strong></div></div><div class="boss-health"><div class="hp-row"><span>BOSS HP</span><strong id="bossHpText"></strong></div><div class="hp-track"><div id="bossHpBar" class="hp-fill boss-fill"></div></div><div id="bossStatus" class="status-list"></div></div><button id="targetBody" class="body-target">합 연결 해제 · 보스 본체 공격</button></div>
       </section>
 
       <section class="battle-bottom">
@@ -43,6 +54,8 @@
       <details class="panel combat-report"><summary>전투 기록 확인</summary><div class="report-tools"><button id="copyLog" class="ghost tiny">기록 복사</button></div><div id="combatLog" class="logs" aria-live="polite"></div></details>
     </main>
   </div>
+  <div id="characterDetailPanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="characterDetailTitle"><div class="panel character-detail-dialog"><div class="modal-top"><h2 id="characterDetailTitle">캐릭터 정보</h2><button id="closeCharacterDetail" class="ghost" aria-label="닫기">✕</button></div><div id="characterDetailContent"></div></div></div>
+  <div id="settingsPanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-label="설정"><div class="panel settings-dialog"><div class="modal-top"><h2>설정</h2><button id="closeSettings" class="ghost">✕</button></div><p class="muted">시스템 설정은 추후 확장 예정입니다.</p><label class="toggle-label"><input id="animationsToggle" type="checkbox" checked/> 화면 애니메이션 사용</label><p class="small muted">진행 데이터는 이 브라우저에 저장됩니다.</p></div></div>
   <div id="discardChoicePanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="discardChoiceTitle">
     <div class="panel special-target-dialog"><h2 id="discardChoiceTitle">버릴 카드 선택</h2><p class="muted small">카드 버리기 효과의 대상을 직접 선택합니다. 이미 장착된 카드는 제외됩니다.</p><div id="discardChoiceList" class="special-target-choices"></div></div>
   </div>

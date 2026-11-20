@@ -4,7 +4,16 @@
   let partyIds: string[] = ['knight', 'rogue', 'mage'];
   let game: any = null;
   let selectedSlotId: string | null = null;
-  let screen: 'formation'|'battle' = 'formation';
+  let screen: 'home'|'collection'|'formation'|'battle' = 'home';
+  const TOTAL_ROSTER=27;
+  const PROGRESS_KEY='magical-girls-city:unlocked:v1';
+  const originalHeroes=HEROES as any[];
+  const collectionRoster=Array.from({length:TOTAL_ROSTER},(_,i)=>originalHeroes[i] || {id:`future-${i+1}`,name:`미공개 캐릭터 ${String(i+1).padStart(2,'0')}`,symbol:'?',role:'상세 정보 준비 중',unreleased:true});
+  function loadUnlocks():string[]{try{const saved=JSON.parse(localStorage.getItem(PROGRESS_KEY)||'null');if(Array.isArray(saved))return saved.filter((id:string)=>originalHeroes.some((h:any)=>h.id===id));}catch{}return originalHeroes.slice(0,3).map((h:any)=>h.id);}
+  let unlockedIds=loadUnlocks();
+  const isOwned=(id:string)=>unlockedIds.includes(id);
+  function saveUnlocks(){try{localStorage.setItem(PROGRESS_KEY,JSON.stringify(unlockedIds));}catch{}}
+  function unlockAfterWin(){const next=originalHeroes.find((h:any)=>!isOwned(h.id));if(!next)return;unlockedIds.push(next.id);saveUnlocks();toast(`승리 보상: ${next.name} 해금!`);}
   let toastTimeout: ReturnType<typeof setTimeout> | undefined;
   let dragSlotId: string | null = null;
   let pendingSpecial: {ownerId:string;cardUid:string} | null = null;
@@ -67,22 +76,63 @@
     linesFrame=requestAnimationFrame(renderClashLines);
   }
 
+  const abilityKeywords=(hero:any):string[]=> {
+    if(!hero?.deck)return [];
+    const keys=new Set<string>();
+    for(const card of [...hero.deck,...(hero.passive?[hero.passive]:[])])for(const effect of card.effects||[])if(effect.keyword)keys.add(effect.keyword);
+    return [...keys];
+  };
+  // Optional roster portrait: the actual artwork is supplied later.
+  // For a playable hero, set hero.portrait = "assets/characters/example.png".
+  function portraitMarkup(hero:any, fallback:string):string{
+    const path=typeof hero?.portrait==='string'?hero.portrait.trim():'';
+    if(path && !/^(?:[a-z]+:|\/\/)/i.test(path) && !path.includes('..') && /^[\w\u3131-\uD7A3/ .-]+$/.test(path))
+      return `<img class="character-portrait-img" src="${esc(path)}" alt="${esc(hero.name)}" loading="lazy"/>`;
+    return `<span class="portrait-symbol">${fallback}</span><span class="collection-art-hint">이미지 준비 중</span>`;
+  }
+  function renderCollection(){
+    const search=($('characterSearch') as HTMLInputElement).value.trim().toLocaleLowerCase();
+    const owned=($('ownershipFilter') as HTMLSelectElement).value;
+    const key=($('keywordFilter') as HTMLSelectElement).value;
+    const visible=collectionRoster.filter((h:any)=>
+      (!search||h.name.toLocaleLowerCase().includes(search)) &&
+      (owned==='all'||(owned==='owned'?isOwned(h.id):!isOwned(h.id))) &&
+      (key==='all'||abilityKeywords(h).includes(key))
+    );
+    $('collectionCount').textContent=`검색 결과 ${visible.length}명 / 전체 27명`;
+    $('unlockProgress').textContent=`보유 캐릭터 ${unlockedIds.length} / 27명 · 현재 구현 ${originalHeroes.length}명`;
+    $('collectionGrid').innerHTML=visible.map((h:any)=>`<button type="button" class="collection-tile ${isOwned(h.id)?'owned':'locked'}" data-detail="${esc(h.id)}" aria-label="${esc(h.name)} 상세 정보"><div class="collection-art">${portraitMarkup(h,isOwned(h.id)?esc(h.symbol):'🔒')}</div><div class="collection-tile-foot"><strong>${esc(h.name)}</strong><span>${isOwned(h.id)?'보유':'미보유'}</span></div></button>`).join('')||'<p class="muted collection-empty">일치하는 캐릭터가 없습니다.</p>';
+  }
+  function showCharacterDetail(id:string){
+    const h=collectionRoster.find((x:any)=>x.id===id);if(!h)return;
+    const owned=isOwned(id);const implemented=!!h.deck;
+    $('characterDetailTitle').textContent=h.name;
+    const passive=(window as any).RaidEngine.PASSIVES?.[h.id];
+    const deck=implemented?h.deck:[];
+    $('characterDetailContent').innerHTML=`<div class="detail-head"><div class="detail-portrait">${portraitMarkup(h,owned?esc(h.symbol):'🔒')}</div><div><span class="pill">${owned?'보유':'미보유'}</span><h3>${esc(h.name)}</h3><p>${esc(h.role)}</p>${implemented?`<div class="detail-stats"><span>체력 <b>${h.maxHp}</b></span><span>속도 <b>${h.speed[0]}~${h.speed[1]}</b></span></div>`:'<p class="muted">해당 캐릭터의 상세 데이터와 덱은 추후 추가될 예정입니다.</p>'}</div></div>${implemented?`<div class="detail-block"><h3>전투 패시브</h3><strong>${esc(passive?.name||'패시브 준비 중')}</strong><p>${esc(passive?.description||'')}</p></div><div class="detail-block"><h3>고정 덱 · ${deck.length}장</h3><div class="detail-deck">${deck.map((c:any)=>`<div class="detail-card"><span>${esc(c.name)}</span><small>${esc(T[c.type]||c.type)} · 위력 ${c.power} · 마력 ${c.manaCost}</small><p>${esc(c.description||'효과 없음')}</p></div>`).join('')}</div></div>`:''}`;
+    $('characterDetailPanel').classList.remove('hidden');
+  }
   function renderFormation(){
+    partyIds=partyIds.filter(id=>isOwned(id));
+    if(partyIds.length===0){const first=originalHeroes.find((h:any)=>isOwned(h.id));if(first)partyIds=[first.id];}
     $('partyCount').textContent=`${partyIds.length} / 6명 출전`;
-    $('partyPicker').innerHTML=HEROES.map((h:any)=>{
+    $('partyPicker').innerHTML=originalHeroes.filter((h:any)=>isOwned(h.id)).map((h:any)=>{
       const idx=partyIds.indexOf(h.id);
-      return `<button type="button" class="roster-item ${idx>=0?'active':''}" data-party="${esc(h.id)}"><span class="roster-symbol">${h.symbol}</span><span class="roster-copy"><strong>${esc(h.name)}</strong><small>${esc(h.role)} · 속도 ${h.speed.join('~')}</small></span><span class="roster-action">${idx>=0?`<b class="order-marker">${idx+1}</b> 편성됨`:'+ 추가'}</span></button>`;
+      return `<button type="button" class="roster-item ${idx>=0?'active':''}" data-party="${esc(h.id)}"><span class="roster-symbol">${esc(h.symbol)}</span><span class="roster-copy"><strong>${esc(h.name)}</strong><small>${esc(h.role)} · 속도 ${h.speed.join('~')}</small></span><span class="roster-action">${idx>=0?`<b class="order-marker">${idx+1}</b> 편성됨`:'+ 추가'}</span></button>`;
     }).join('');
     const slotCounts=distribute(partyIds.length);
     $('partyOrder').innerHTML=partyIds.map((id,i)=>{
-      const h=HEROES.find((c:any)=>c.id===id);
-      return `<div class="order-item"><div class="order-number">${i+1}</div><div class="order-copy"><strong>${h.symbol} ${esc(h.name)}</strong><small>행동 슬롯 ${slotCounts[i]}개 · 첫 턴 ${slotCounts[i]+2}장</small></div><div class="order-buttons"><button data-move="${esc(id)}" data-direction="up" title="앞으로" ${i===0?'disabled':''}>↑</button><button data-move="${esc(id)}" data-direction="down" title="뒤로" ${i===partyIds.length-1?'disabled':''}>↓</button><button data-party="${esc(id)}" title="편성 제외">×</button></div></div>`;
+      const h=originalHeroes.find((c:any)=>c.id===id);
+      return `<div class="order-item"><div class="order-number">${i+1}</div><div class="order-copy"><strong>${esc(h.symbol)} ${esc(h.name)}</strong><small>행동 슬롯 ${slotCounts[i]}개 · 첫 턴 ${slotCounts[i]+2}장</small></div><div class="order-buttons"><button data-move="${esc(id)}" data-direction="up" title="앞으로" ${i===0?'disabled':''}>↑</button><button data-move="${esc(id)}" data-direction="down" title="뒤로" ${i===partyIds.length-1?'disabled':''}>↓</button><button data-party="${esc(id)}" title="편성 제외">×</button></div></div>`;
     }).join('');
   }
-  function showScreen(next:'formation'|'battle'){
-    if(next==='formation'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');}
-    screen=next;$('formationScreen').classList.toggle('hidden',next!=='formation');$('battleScreen').classList.toggle('hidden',next!=='battle');$('turnBadge').classList.toggle('hidden',next!=='battle');$('backToParty').classList.toggle('hidden',next!=='battle');
-    if(next==='formation')renderFormation();else renderBattle();
+  function showScreen(next:'home'|'collection'|'formation'|'battle'){
+    if(next!=='battle'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');}
+    screen=next;
+    for(const [type,id] of [['home','homeScreen'],['collection','collectionScreen'],['formation','formationScreen'],['battle','battleScreen']])$(id).classList.toggle('hidden',type!==next);
+    $('turnBadge').classList.toggle('hidden',next!=='battle');$('backToParty').classList.toggle('hidden',next!=='battle');$('toHome').classList.toggle('hidden',next==='home');
+    if(next==='formation')renderFormation();else if(next==='collection')renderCollection();else if(next==='battle')renderBattle();
+    window.scrollTo(0,0);
   }
   function beginBattle(){
     game=new RaidBattle(Math.random,{partyIds:[...partyIds]});
@@ -102,12 +152,17 @@
     // UI-only sort: never mutate intent IDs, linked slot IDs or execution order.
     $('intents').innerHTML=sortSlotsBySpeed(game.boss.intents).map((x:any,i:number)=>{
       const pair:any=linked.get(x.id);
-      return `<div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="${esc(x.card.name)}에 합 연결"><div class="top"><span class="speed">SPD ${x.speed}</span><span>적 슬롯 ${i+1}</span></div><div class="intent-title">${glyph[x.card.type]} ${esc(x.card.name)} <strong>${game.finalPower(game.boss,x.card)}</strong></div><div class="intent-target">대상 ${esc(game.getUnit(x.targetId)?.name||'자신')}</div><div class="intent-tooltip" role="tooltip"><div class="intent-tooltip-heading">${esc(x.card.name)}</div><div class="intent-tooltip-stats"><span>${esc(T[x.card.type]||x.card.type)}</span><span>위력 ${game.finalPower(game.boss,x.card)}</span><span>속도 ${x.speed}</span></div><p>${esc(x.card.description||'별도의 추가 효과가 없는 기본 행동')}</p><div class="intent-tooltip-target">공격 대상: ${esc(game.getUnit(x.targetId)?.name||'자신')}</div></div>${pair?`<div class="intent-link">↔ ${esc(game.getUnit(pair.ownerId).name)}의 슬롯 연결됨</div>`:'<div class="intent-link hint">여기에 아군 슬롯을 드롭</div>'}</div>`;
+      return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="${esc(x.card.name)}에 합 연결"><div class="top"><span>적 슬롯 ${i+1}</span></div><div class="intent-title">${glyph[x.card.type]} ${esc(x.card.name)} <strong>${game.finalPower(game.boss,x.card)}</strong></div><div class="intent-target">대상 ${esc(game.getUnit(x.targetId)?.name||'자신')}</div><div class="intent-tooltip" role="tooltip"><div class="intent-tooltip-heading">${esc(x.card.name)}</div><div class="intent-tooltip-stats"><span>${esc(T[x.card.type]||x.card.type)}</span><span>위력 ${game.finalPower(game.boss,x.card)}</span><span>속도 ${x.speed}</span></div><p>${esc(x.card.description||'별도의 추가 효과가 없는 기본 행동')}</p><div class="intent-tooltip-target">공격 대상: ${esc(game.getUnit(x.targetId)?.name||'자신')}</div></div>${pair?`<div class="intent-link">↔ ${esc(game.getUnit(pair.ownerId).name)}의 슬롯 연결됨</div>`:'<div class="intent-link hint">여기에 아군 슬롯을 드롭</div>'}</div>`;
     }).join('');
-    $('heroes').innerHTML=game.allies.map((u:any,position:number)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''}"><div class="battle-hero-top"><span class="hero-symbol">${u.symbol}</span><div class="hero-basic"><strong>${position+1}. ${esc(u.name)}</strong><small>${esc(u.role)} · SPD ${u.speed.join('~')}</small></div><div class="hero-hp-number">${u.hp}/${u.maxHp} HP</div></div><div class="hp-track"><div class="hp-fill" style="width:${Math.max(0,100*u.hp/u.maxHp)}%"></div></div><div class="hero-status">${statuses(u)}</div><div class="hero-slots">${sortSlotsBySpeed(u.slots).map((s:any,i:number)=>{
-      const c=game.cardForSlot(s),intent=game.boss.intents.find((it:any)=>it.id===s.targetIntentId);
-      return `<button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} title="${c?'적 슬롯까지 드래그하면 합 연결':'클릭하여 해당 캐릭터의 손패 표시'}"><div class="top"><span>행동 ${i+1}</span><span class="speed">SPD ${s.speed}</span></div><div class="slot-card">${c?`${glyph[c.type]} ${esc(c.name)} · ${game.finalPower(u,c)}${c.type==='MULTI_ATTACK'?` (${c.hitCount}연타)`:''}`:'+ 카드 선택'}</div><div class="slot-target">${c?(intent?`⚔ 합: ${esc(intent.card.name)}`:['ATTACK','MULTI_ATTACK'].includes(c.type)?'→ 보스 본체':'→ 수비 발동'):'클릭하여 손패 열기'}</div>${c?'<div class="slot-drag-hint">⠿ 드래그하여 합 연결</div>':''}</button>`;
-    }).join('')||'<span class="small muted">행동 불가</span>'}</div></article>`).join('');
+    $('heroes').innerHTML=game.allies.map((u:any,position:number)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''} ${u.hp<=0?'fallen':''}">
+      <div class="hero-slots">${sortSlotsBySpeed(u.slots).map((s:any,i:number)=>{
+        const c=game.cardForSlot(s),intent=game.boss.intents.find((it:any)=>it.id===s.targetIntentId);
+        return `<div class="ally-action-wrap"><span class="hex-speed ally-hex">${s.speed}</span><button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} title="${c?'적 슬롯으로 드래그하여 합 연결':'클릭하여 손패 표시'}"><span class="mini-slot-name">${c?esc(c.name):`슬롯 ${i+1}`}</span><span class="mini-slot-power">${c?game.finalPower(u,c):'+'}</span><span class="mini-slot-target">${intent?'⚔ 합 연결':c?'행동 준비':'카드 선택'}</span></button></div>`;
+      }).join('')}</div>
+      <div class="hero-body" role="img" aria-label="${esc(u.name)}"><span class="hero-body-symbol">${esc(u.symbol)}</span><strong>${esc(u.name)}</strong><small>${position+1}번 편성</small></div>
+      <div class="hero-health"><div class="hp-track"><div class="hp-fill boss-fill" style="width:${Math.max(0,100*u.hp/u.maxHp)}%"></div></div><span>${u.hp}/${u.maxHp} HP</span></div>
+      <div class="hero-status">${statuses(u)}</div>
+    </article>`).join('');
     const hero=selectedHero();
     $('manaTitle').textContent=`${hero.symbol} ${hero.name}`;
     $('manaDisplay').innerHTML=`<div class="mana-large"><span>마력</span><strong>${hero.mana} <small>/ ${hero.maxMana}</small></strong></div><div class="mana-track"><span style="width:${hero.maxMana?Math.max(0,100*hero.mana/hero.maxMana):0}%"></span></div><div class="mana-note">턴당 자연 회복 <b>+${hero.manaRegen}</b><br>장착 카드 비용 <b>${game.totalPlannedMana(hero)}</b></div>`;
@@ -147,6 +202,8 @@
   });
   document.addEventListener('click',ev=>{
     const target=ev.target as HTMLElement;
+    if(screen==='collection'){const detail=target.closest<HTMLElement>('[data-detail]');if(detail)showCharacterDetail(detail.dataset.detail!);return;}
+    if(screen==='home')return;
     if(screen==='formation'){
       const move=target.closest<HTMLElement>('[data-move]');
       if(move){const idx=partyIds.indexOf(move.dataset.move!);const other=idx+(move.dataset.direction==='up'?-1:1);if(idx>=0&&other>=0&&other<partyIds.length){[partyIds[idx],partyIds[other]]=[partyIds[other],partyIds[idx]];renderFormation();}return;}
@@ -242,13 +299,27 @@
   window.addEventListener('resize',scheduleClashLines);
   window.addEventListener('scroll',scheduleClashLines,{passive:true});
   if(typeof ResizeObserver!=='undefined'){new ResizeObserver(scheduleClashLines).observe($('battleArena'));}
+  $('openCollection').addEventListener('click',()=>showScreen('collection'));
+  $('openFormation').addEventListener('click',()=>showScreen('formation'));
+  $('collectionBack').addEventListener('click',()=>showScreen('home'));
+  $('toHome').addEventListener('click',()=>showScreen('home'));
+  $('homeSettings').addEventListener('click',()=>$('settingsPanel').classList.remove('hidden'));
+  $('closeSettings').addEventListener('click',()=>$('settingsPanel').classList.add('hidden'));
+  $('animationsToggle').addEventListener('change',ev=>document.documentElement.classList.toggle('reduced-motion',!(ev.target as HTMLInputElement).checked));
+  $('closeCharacterDetail').addEventListener('click',()=>$('characterDetailPanel').classList.add('hidden'));
+  for(const overlay of ['settingsPanel','characterDetailPanel'])$(overlay).addEventListener('click',ev=>{if(ev.target===$(overlay))$(overlay).classList.add('hidden');});
+  document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){for(const overlay of ['settingsPanel','characterDetailPanel'])$(overlay).classList.add('hidden');}});
+  const keywordList=Array.from(new Set(originalHeroes.flatMap((h:any)=>abilityKeywords(h)))).sort();
+  $('keywordFilter').innerHTML='<option value="all">모든 키워드</option>'+keywordList.map(k=>`<option value="${esc(k)}">${esc(K[k]||k)}</option>`).join('');
+  for(const id of ['characterSearch','ownershipFilter','keywordFilter'])$(id).addEventListener('input',renderCollection);
+  $('clearFilters').addEventListener('click',()=>{($('characterSearch') as HTMLInputElement).value='';($('ownershipFilter') as HTMLSelectElement).value='all';($('keywordFilter') as HTMLSelectElement).value='all';renderCollection();});
   $('applyParty').addEventListener('click',beginBattle);
   $('backToParty').addEventListener('click',()=>showScreen('formation'));
   $('reset').addEventListener('click',()=>{if(confirm('현재 전투를 초기화하고 같은 편성으로 다시 시작할까요?'))beginBattle();});
   $('clearSlot').addEventListener('click',()=>{if(selectedSlotId){game.unassign(selectedSlotId);renderBattle();}});
   $('targetBody').addEventListener('click',()=>{if(selectedSlotId){game.unlink(selectedSlotId);renderBattle();toast('합 연결을 해제했습니다.');}});
-  $('execute').addEventListener('click',()=>{game.resolveTurn();selectedSlotId=null;renderBattle();});
+  $('execute').addEventListener('click',()=>{game.resolveTurn();selectedSlotId=null;if(game.status==='WON')unlockAfterWin();renderBattle();});
   $('nextTurn').addEventListener('click',()=>{game.nextTurn();selectedSlotId=game.allies.find((u:any)=>u.slots.length)?.slots[0]?.id||null;renderBattle();});
   $('copyLog').addEventListener('click',()=>{const value=game.log.map((l:any)=>`[턴 ${l.turn}] ${l.text}`).join('\n');if(navigator.clipboard?.writeText)navigator.clipboard.writeText(value).then(()=>toast('전투 기록을 복사했습니다.')).catch(()=>toast('복사에 실패했습니다.'));else toast('클립보드를 지원하지 않습니다.');});
-  renderFormation();showScreen('formation');
+  showScreen('home');
 })();
