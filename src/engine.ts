@@ -12,7 +12,8 @@ declare const module: any;
   };
   const T: Record<string,string> = { ATTACK:'공격', GUARD:'방어', EVADE:'회피', COUNTER:'반격', SPECIAL:'특수' };
   const eff = (trigger: EffectTrigger, keyword: KeywordId, potency?: number, count?: number, target: EffectTarget='SELF') => ({trigger,action:'APPLY_KEYWORD',keyword,potency,count,target});
-  const card = (id,name,type,power,description='',effects=[]) => ({id,name,type,power,description,effects,manaCost: type==='ATTACK'?(power>=15?3:2):type==='EVADE'?(power>=15?3:2):type==='COUNTER'?(power>=15?3:2):type==='GUARD'?(power>=15?2:1):0});
+  // Optional illustration path: set the returned card's image field to 'assets/cards/filename.png'.
+  const card = (id,name,type,power,description='',effects=[]) => ({id,name,type,power,description,effects,image:null as string | null,manaCost: type==='ATTACK'?(power>=15?3:2):type==='EVADE'?(power>=15?3:2):type==='COUNTER'?(power>=15?3:2):type==='GUARD'?(power>=15?2:1):0});
   const HEROES: HeroTemplate[] = [
     {id:'knight',name:'수호기사',role:'방어 · 가로채기',symbol:'🛡️',maxHp:108,speed:[2,6],color:'#6f9ed9',deck:[
       card('k1','수호의 일격','ATTACK',12,'합 승리 시 공격력 증가 2 · 횟수 2',[eff('ON_CLASH_WIN','ATTACK_UP',2,2)]),
