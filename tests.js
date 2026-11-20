@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict');
-const {RaidBattle}=require('./engine.js');
+const {RaidBattle}=require('./dist/engine.js');
 const make=()=>new RaidBattle(()=>.4);
 const c=(name,type,power,effects=[])=>({id:name,name,type,power,effects});
 const tests=[];
@@ -99,4 +99,124 @@ test('특수 조건 체력 이하일 때만 발동',()=>{
   a.hp=60;g.activate(spell,a,b);assert.equal(a.hp,60);
   a.hp=40;g.activate(spell,a,b);assert.equal(a.hp,49);
 });
+
+// V3: declarative effects, opt-in lifecycle subscriptions, guards.
+test('V3 데이터 유효성 검사: 정상 카드',()=>{
+  const {validateCard}=require('./dist/engine.js');
+  assert.deepEqual(validateCard(c('ok','ATTACK',9,[fx('ON_HIT','DEAL_DAMAGE',{target:'TARGET',value:2})])),[]);
+});
+test('V3 데이터 유효성 검사: 잘못된 명령과 대상 거부',()=>{
+  const {validateCard}=require('./dist/engine.js');
+  const errors=validateCard(c('bad','ATTACK',2,[fx('ON_USE','MAGIC',{target:'UNKNOWN'})]));
+  assert.equal(errors.some(x=>x.includes('action')),true);
+  assert.equal(errors.some(x=>x.includes('target')),true);
+});
+test('V3 사용 시 카드 드로우 효과',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  const before=a.hand.length;
+  g.activate(c('draw','ATTACK',1,[fx('ON_USE','DRAW_CARDS',{value:2})]),a,b);
+  assert.equal(a.hand.length,before+2);
+  assert.equal(g.events.some(e=>e.type==='CARDS_DRAWN'&&e.count===2),true);
+});
+test('V3 추가 피해는 기존 취약·보호·방어막을 반영',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  g.apply(b,'VULNERABLE',{potency:2,count:2});g.apply(b,'PROTECTION',{potency:1,count:2});g.apply(b,'SHIELD',{potency:3});
+  g.activate(c('bonus','ATTACK',1,[fx('ON_USE','DEAL_DAMAGE',{target:'TARGET',value:10})]),a,b);
+  assert.equal(b.hp,b.maxHp-8);
+  assert.equal(g.kw(b,'SHIELD'),0);
+});
+test('V3 추가 피해는 ON_HIT를 재발동하지 않음',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  const atk=c('bonus-hit','ATTACK',10,[fx('ON_HIT','DEAL_DAMAGE',{target:'TARGET',value:5})]);
+  g.dealAttack(a,b,atk);
+  assert.equal(b.hp,b.maxHp-15);
+  assert.equal(g.events.filter(e=>e.type==='EFFECT_DAMAGE').length,1);
+  assert.equal(g.events.filter(e=>e.type==='HIT').length,1);
+});
+test('V3 광역 아군 강화는 살아있는 아군 모두에게 부여',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  g.allies[2].hp=0;
+  g.activate(c('team','GUARD',0,[fx('ON_USE','APPLY_KEYWORD',{target:'ALL_ALLIES',keyword:'POWER_UP',potency:2})]),a,b);
+  assert.equal(g.kw(g.allies[0],'POWER_UP'),2);
+  assert.equal(g.kw(g.allies[1],'POWER_UP'),2);
+  assert.equal(g.kw(g.allies[2],'POWER_UP'),0);
+});
+test('V3 보스 광역 약화는 살아있는 아군에게만',()=>{
+  const g=make(),b=g.boss;g.allies[1].hp=0;
+  g.activate(c('mass','GUARD',0,[fx('ON_USE','APPLY_KEYWORD',{target:'ALL_ENEMIES',keyword:'ATTACK_DOWN',potency:2})]),b,g.allies[0]);
+  assert.equal(g.kw(g.allies[0],'ATTACK_DOWN'),2);
+  assert.equal(g.kw(g.allies[1],'ATTACK_DOWN'),0);
+  assert.equal(g.kw(g.allies[2],'ATTACK_DOWN'),2);
+});
+test('V3 ON_TURN_START OWNED 지속 효과가 다음 턴 시작에 실행',()=>{
+  const g=make(),a=g.allies[0];
+  const passive=c('passive','ATTACK',1,[fx('ON_TURN_START','APPLY_KEYWORD',{keyword:'ATTACK_UP',potency:2,count:2,scope:'OWNED'})]);
+  a.deck.push(passive);
+  g.resolveTurn();g.nextTurn();
+  assert.equal(g.kw(a,'ATTACK_UP'),2);
+});
+test('V3 OWNED 효과는 카드 사용 시 실행하지 않음',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  const passive=c('passive','ATTACK',1,[fx('ON_USE','APPLY_KEYWORD',{keyword:'ATTACK_UP',potency:2,scope:'OWNED'})]);
+  g.activate(passive,a,b);assert.equal(g.kw(a,'ATTACK_UP'),0);
+});
+test('V3 ON_TURN_END OWNED가 키워드 정리보다 먼저 실행',()=>{
+  const g=make(),a=g.allies[0];
+  const passive=c('end','GUARD',1,[fx('ON_TURN_END','APPLY_KEYWORD',{keyword:'PROTECTION',potency:2,count:2,scope:'OWNED'})]);
+  a.discard.push(passive);g.endTurn();
+  assert.equal(g.kw(a,'PROTECTION'),2);
+  assert.equal(a.keywords.PROTECTION.count,1);
+});
+test('V3 같은 카드 id 복사본의 지속 효과는 한 번만 적용',()=>{
+  const g=make(),a=g.allies[0];
+  const passive=c('unique-passive','ATTACK',1,[fx('ON_TURN_START','APPLY_KEYWORD',{keyword:'ATTACK_UP',potency:2,count:3,scope:'OWNED'})]);
+  a.deck.push(passive,{...passive});
+  g.resolveTurn();g.nextTurn();assert.equal(g.kw(a,'ATTACK_UP'),2);
+});
+test('V3 추가 조건: 키워드 횟수와 턴',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  g.apply(a,'PROTECTION',{potency:2,count:3});
+  const effect=c('conditional','ATTACK',1,[fx('ON_USE','HEAL',{value:10,conditions:[{kind:'KEYWORD_COUNT_AT_LEAST',keyword:'PROTECTION',value:3},{kind:'TURN_AT_MOST',value:1}]})]);
+  a.hp-=20;g.activate(effect,a,b);assert.equal(a.hp,a.maxHp-10);
+  g.turn=2;g.activate(effect,a,b);assert.equal(a.hp,a.maxHp-10);
+});
+test('V3 복합 actions의 대상별 우선순위가 유지됨',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  const spell=c('mixed','ATTACK',1,[{trigger:'ON_USE',actions:[
+    {action:'APPLY_KEYWORD',target:'TARGET',keyword:'VULNERABLE',potency:2},
+    {action:'DEAL_DAMAGE',target:'TARGET',value:10}
+  ]}]);
+  g.activate(spell,a,b);assert.equal(b.hp,b.maxHp-12);
+});
+test('V3 회피 키워드 수치 유지 규칙 회귀',()=>{
+  const g=make(),u=g.allies[0];g.apply(u,'EVADE',{potency:14});g.apply(u,'EVADE',{potency:11});
+  assert.equal(g.kw(u,'EVADE'),14);assert.equal(g.evade(u,12),true);
+});
+test('V3 ON_KILL은 공격으로 적을 처치할 때 실행',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  b.hp=5;
+  const kill=c('finish','ATTACK',9,[fx('ON_KILL','HEAL',{value:7})]);
+  a.hp-=12;g.dealAttack(a,b,kill);
+  assert.equal(b.hp,0);
+  assert.equal(a.hp,a.maxHp-5);
+});
+test('V3 추가 효과 피해는 반격 및 ON_HIT를 자동 발생시키지 않음',()=>{
+  const g=make(),a=g.allies[0],b=g.boss;
+  b.counter={card:c('boss-counter','COUNTER',9),remaining:1};
+  const hp=a.hp;
+  g.activate(c('effect','ATTACK',1,[fx('ON_USE','DEAL_DAMAGE',{target:'TARGET',value:5})]),a,b);
+  assert.equal(a.hp,hp);
+  assert.equal(g.events.filter(e=>e.type==='COUNTER_TRIGGERED').length,0);
+});
+
+// V4 boundary regression tests
+test('일반 키워드 최초 위력·횟수 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_UP',{potency:120,count:150});assert.equal(u.keywords.ATTACK_UP.potency,99);assert.equal(u.keywords.ATTACK_UP.count,99);});
+test('기존 키워드 합산 시 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'VULNERABLE',{potency:98,count:98});g.apply(u,'VULNERABLE',{potency:10,count:10});assert.deepEqual(u.keywords.VULNERABLE,{potency:99,count:99});});
+test('위력만 추가 시 횟수 유지 + 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_UP',{potency:95,count:2});g.apply(u,'ATTACK_UP',{potency:20});assert.deepEqual(u.keywords.ATTACK_UP,{potency:99,count:2});});
+test('횟수만 추가 시 위력 유지 + 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_UP',{potency:3,count:90});g.apply(u,'ATTACK_UP',{count:20});assert.deepEqual(u.keywords.ATTACK_UP,{potency:3,count:99});});
+test('회피와 방어막 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'EVADE',{potency:200});g.apply(u,'SHIELD',{potency:70});g.apply(u,'SHIELD',{potency:80});assert.equal(g.kw(u,'EVADE'),99);assert.equal(g.kw(u,'SHIELD'),99);});
+test('신속 예약·활성 위력과 횟수 99 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'HASTE',{potency:90,count:90});g.apply(u,'HASTE',{potency:30,count:30});assert.deepEqual(u.pending[0],{id:'HASTE',potency:99,count:99});g.activatePending(u);assert.deepEqual(u.keywords.HASTE,{potency:99,count:99});});
+test('키워드 직접 조정은 99로 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_UP',{potency:20,count:10});g.modifyKeyword(u,'ATTACK_UP',{potency:999,count:999});assert.deepEqual(u.keywords.ATTACK_UP,{potency:99,count:99});});
+test('과도한 속박에도 속도 최솟값은 1',()=>{const g=make(),u=g.allies[0];g.apply(u,'BIND',{potency:99});g.activatePending(u);assert.equal(g.speedFor(u),1);});
+test('과도한 위력 감소에도 카드 최종 위력 0',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_DOWN',{potency:99});assert.equal(g.finalPower(u,c('weak','ATTACK',5)),0);});
 console.log(`PASS ${tests.length} tests\n`+tests.map(t=>'✓ '+t).join('\n'));

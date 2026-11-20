@@ -1,68 +1,72 @@
-# 심연 레이드 — 전투 엔진 V2
+# 심연 레이드 — TypeScript 전투 엔진 V4
 
-기존 `raid-card-prototype`의 **호환 업그레이드**. 프로젝트의 `index.html`, `engine.js`, `ui.js`, `styles.css`, `tests.js`, `README.md`를 교체하면 됩니다. HTML/CSS/JS만 사용하여 GitHub Pages에서 빌드 과정 없이 배포할 수 있습니다.
+이 프로젝트는 기존 V3의 전투 행동 및 카드 효과 규칙을 TypeScript로 이전한 버전입니다. **원본 소스는 `src/engine.ts`, `src/ui.ts`, `src/types.ts`이고 브라우저는 TypeScript가 아닌 컴파일된 JavaScript를 실행합니다.**
 
-## 설치 및 배포
+## 설치와 로컬 실행 (Windows / VS Code)
 
-1. 기존 GitHub 저장소에서 로컬 변경 사항을 커밋하거나 백업합니다.
-2. 이 ZIP 파일을 풀어 나온 6개 파일을 기존 프로젝트 **최상위**에 덮어씁니다.
-3. VS Code에서 `node tests.js`를 실행하여 `PASS 26 tests`를 확인합니다. (Node.js 필요)
-4. `index.html`을 브라우저에서 열어 플레이합니다.
-5. 변경사항을 GitHub에 배포: `git add .` → `git commit -m "Upgrade battle engine v2"` → `git push origin main`.
+프로젝트 폴더에서:
 
-## V2 변경점
-
-- 전투 진행을 구조화된 이벤트 로그 `game.events`에 기록합니다. 기존 사용자용 한국어 `game.log`도 유지합니다.
-- 카드의 동일 이벤트 트리거 효과는 `priority`가 높을수록 먼저 처리합니다. 동률이면 카드에 기록된 순서를 따릅니다.
-- `conditions`를 이용해 키워드 보유, 미보유, HP%, 가해진 HP 피해량을 기준으로 발동을 제한할 수 있습니다.
-- 하나의 효과에서 `actions: [...]`로 여러 명령을 연달아 실행할 수 있습니다. 기존 단일 액션 형식도 호환합니다.
-- `MODIFY_KEYWORD`, `REMOVE_KEYWORD`, `HEAL` 명령을 지원합니다.
-- 공격 전 `BEFORE_ATTACK`, 피해 계산 전 `BEFORE_DAMAGE`, 적중 후 `ON_HIT`, 피해 후 `AFTER_DAMAGE` 이벤트를 사용할 수 있습니다.
-- 활성화된 수비 카드의 피격 반응 효과를 위한 `ON_ATTACKED`, `ON_HIT_TAKEN`, `ON_DAMAGED` 지원. `ON_DAMAGED`는 실제 HP 피해가 1 이상일 때만 발동합니다.
-- 회피 성공/실패, 반격, 합 결과, 공격 적중 등에 대해 검사 가능한 구조화 이벤트 기록을 제공합니다.
-- 기존 15개 검증에 11개 테스트를 추가했습니다.
-
-## 확정 규칙 유지
-
-- 3명 아군과 1명 보스, 캐릭터별 고정 덱, 행동 슬롯별 매 턴 무작위 속도 (인원과 카드 수는 시범 수치).
-- 다른 아군으로 보스 공격을 가로채려면 대응 슬롯 속도가 보스 슬롯 속도보다 엄격히 높아야 합니다. 원래 대상은 직접 대응할 수 있습니다.
-- 공격 합은 두 공격의 위력을 비교해 한쪽 공격을 완전히 취소하며, 동률이면 모두 취소합니다. 승자의 공격 대상은 합 상대입니다.
-- 카드 `ON_USE` 효과는 합 위력 계산 전에 적용됩니다. 합 결과 효과가 끝난 후 피해 계산 직전에 카드 위력을 재계산합니다.
-- 보호·취약: 각 1당 10%씩 합산. 피해 계산 후 방어막 → 체력. (소수점 버림/위력 최소 0은 프로토타입 기준)
-- 방어: 방어막은 여러 공격을 흡수하고 턴 종료 시 사라집니다.
-- 회피: 대응한 더 빠른 보스 공격의 합에서 조기 활성화 가능. 매 공격마다 자동 판정, 성공 시 유지, 실패 시 즉시 해제. 재부여 시 큰 수치 유지.
-- 반격: 공격 적중 후 공격자에게 최대 1회. 방어막으로 전부 막아도 발동, 성공한 회피 후에는 발동하지 않음.
-- 일반 키워드의 위력·횟수는 각각 합산. 첫 획득에서만 생략값 1, 기존 보유 시 생략값 0. 횟수는 턴 종료마다 1 감소, 횟수가 없는 키워드는 턴 종료 시 제거.
-- 신속·속박은 다음 턴 시작에 활성화되어 속도 계산에 적용됩니다. 적중 시 취약은 해당 타격의 피해를 소급 변경하지 않습니다.
-- `SPECIAL` 타입의 규칙은 아직 미정입니다.
-
-## 효과 데이터 형식
-
-```js
-{
-  trigger: 'ON_USE', priority: 5,
-  conditions: [{kind: 'HP_AT_MOST_PERCENT', value: 50}],
-  actions: [
-    { action: 'APPLY_KEYWORD', keyword: 'ATTACK_UP', potency: 2 },
-    { action: 'HEAL', value: 4 }
-  ]
-}
+```powershell
+npm install
+npm test
 ```
 
-각 `actions`의 기본 대상은 `SELF`입니다. `target:'TARGET'`이면 해당 효과 실행 상황의 대상에게 적용합니다.
+- `npm run build`: TypeScript를 `dist/engine.js`, `dist/ui.js`로 컴파일하고 HTML/CSS 복사
+- `npm run typecheck`: TypeScript 타입 검사만 수행
+- `npm test`: 빌드하고 자동 테스트 실행
+- `dist/index.html`: 완성된 로컬 브라우저 진입점. `index.html` 원본을 열지 말고 `dist/index.html`을 여세요.
+- 수정 후 항상 `npm run build`를 실행해 `dist`에 반영하세요.
+- Node.js 24 권장. 프로젝트에는 `typescript` 패키지가 개발 의존성으로 포함되어 있습니다.
 
-- 조건: `HAS_KEYWORD`, `MISSING_KEYWORD`, `HP_AT_MOST_PERCENT`, `HP_AT_LEAST_PERCENT`, `DAMAGE_AT_LEAST`
-- 명령: `APPLY_KEYWORD`, `MODIFY_KEYWORD`, `REMOVE_KEYWORD`, `HEAL`
-- 이 이벤트 명칭들은 엔진 내부 기능입니다. 턴 시작·종료 이벤트를 기록하지만, 덱의 모든 카드가 자동으로 `ON_TURN_START` 효과를 발동하는 패시브 시스템은 아직 구현하지 않았습니다.
+## GitHub Pages 설정 (중요)
 
-## 파일 구성
+1. 기존 저장소(`hsChoi-cpu/msd-card-fangame`)의 루트에 **ZIP 안의 파일과 숨김 폴더 `.github`까지** 복사합니다.
+2. 기존 `engine.js`, `ui.js`는 원본 소스로 더 이상 사용하지 않습니다. 루트에 남아 있다면 삭제하거나 Git에서 제거합니다. `src/*.ts`가 새 원본입니다.
+3. 저장소에서 **Settings → Pages → Build and deployment → Source: GitHub Actions**를 선택합니다. 이전 `Deploy from a branch` 설정을 반드시 변경하세요. 커스텀 workflow를 사용하지 않으면 원본 `.ts`를 자동으로 빌드하지 않습니다.
+4. `git add -A && git commit -m "Migrate engine to TypeScript v4" && git push origin main`
+5. **Actions → Build and deploy TypeScript game** 에서 빌드/테스트/배포 2개 작업이 모두 성공했는지 확인합니다.
+6. 배포된 사이트: `https://hschoi-cpu.github.io/msd-card-fangame/`
 
-- `engine.js` — 독립적인 전투 로직과 데이터
-- `tests.js` — Node.js 회귀 테스트
-- `ui.js`, `index.html`, `styles.css` — 기존 브라우저 인터페이스, 호환 유지
+이 Workflow는 `actions/checkout@v6`, `actions/setup-node@v6`, `actions/configure-pages@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5` 를 사용합니다. GitHub Pages의 기본 `pages build and deployment`에서 보여준 `actions/upload-artifact@v4` 경고는 GitHub에서 자동 생성한 기존 배포 작업의 경고일 수 있습니다. 새 Workflow로 이전해도 과거 실행 기록은 남습니다. 과거 실행의 실제 실패 원인은 별도의 실패 단계 로그에서 확인해야 합니다.
 
-## 남은 구현 과제
+## 확정 전투 규칙
 
-- 특수 카드, 복잡한 다중 대상 효과, 패시브 및 턴 이벤트 구독, 추가 피해의 연쇄 이벤트, 세이브, 정교한 보스 기믹, 애니메이션.
-- `ON_ATTACKED` 등 수비 이벤트는 현재 활성 수비 카드 반응용이며, 캐릭터의 전역 패시브 수신 시스템과는 다릅니다.
-- 브라우저 그래픽 및 긴 시나리오의 수동 QA는 별도로 계속 진행해야 합니다.
+- 캐릭터별 고정 덱, 싱글플레이, 보스 행동 예고 후 카드 배치
+- 행동 슬롯별 매 턴 무작위 속도, **최종 속도 최소 1**
+- 다른 아군의 공격을 가로채려면 아군 행동 속도가 보스 슬롯 속도보다 엄격하게 높아야 함
+- 공격 합: 높은 위력 승리, 낮은 위력 취소, 동률 시 쌍방 취소
+- 공격/방어/회피/반격/특수 타입; 특수 타입의 개별 효과는 추후 정의
+- **카드 최종 위력 최소 0**, 사용 시 효과 적용 후 합 위력 계산, 피해 직전 위력 다시 계산
+- 공격 위력은 기본 피해량. 보호·취약 각각 1당 받는 피해 ±10%, 합산 적용
+- 방어는 방어막 획득, 잔여 방어막은 턴 종료까지 유지
+- 회피 카드가 빠른 적 공격과 연결되면 **그 적의 실행 시점**에 회피 활성화. 이후 자신에게 향한 공격에 자동 회피, 한 번 실패하면 회피 상태 즉시 소멸. 회피 재부여 시 높은 수치 유지.
+- 반격은 피격 후 공격자에게 턴당 1회 발동. 방어막으로 전부 막아도 피격으로 처리하고 반격 가능.
+- **모든 키워드 위력과 횟수는 각각 최대 99** (0~99 제한; 0 제거 규칙은 키워드 유형에 따름)
+- 일반 키워드는 위력/횟수 합산. **최초 획득 시** 생략된 수치만 1로 보충, 기존 키워드에 재부여할 때 생략 필드는 변화 없음.
+- 횟수가 있는 키워드는 턴 종료마다 횟수 -1, 횟수 없는 키워드는 턴 종료 시 소멸.
+- 신속·속박은 다음 턴 시작에 부여하고 그 턴의 슬롯 속도 계산에 반영
+- 적중 시 취약 부여는 **해당 공격의 피해 처리 이후**이므로 다음 공격부터 적용
+
+## 현재 카드 효과 시스템
+
+6개 액션 명령: `APPLY_KEYWORD`, `MODIFY_KEYWORD`, `REMOVE_KEYWORD`, `HEAL`, `DRAW_CARDS`, `DEAL_DAMAGE`.
+
+18개 트리거: `ON_BATTLE_START`, `ON_TURN_START`, `ON_TURN_END`, `ON_USE`, `ON_CLASH_START`, `ON_CLASH_WIN`, `ON_CLASH_LOSE`, `ON_CLASH_DRAW`, `BEFORE_ATTACK`, `BEFORE_DAMAGE`, `ON_HIT`, `AFTER_DAMAGE`, `ON_ATTACKED`, `ON_HIT_TAKEN`, `ON_DAMAGED`, `ON_EVADE_SUCCESS`, `ON_EVADE_FAIL`, `ON_KILL`.
+
+10개 조건과 5개 대상 범위가 지원됩니다. 복합 액션, 우선순위, 명시적 `scope:'OWNED'` 지속 효과가 기존과 동일하게 동작합니다.
+
+## 주요 파일
+
+```text
+src/engine.ts             전투 엔진 TypeScript (V3 코드 이식 및 경계값 보정)
+src/ui.ts                 브라우저 화면 TypeScript
+src/types.ts              카드·키워드·이벤트 공통 모델
+index.html                웹 페이지 원본
+styles.css                화면 CSS
+scripts/copy-static.mjs   HTML/CSS를 dist에 복사
+.github/workflows/pages.yml  TypeScript 컴파일 + 테스트 + Pages 배포
+tests.js                  51개 회귀 및 경계값 자동 테스트
+package.json, tsconfig.json
+```
+
+**주의:** 이 버전은 전체 코드를 TypeScript로 컴파일 가능하게 이식한 1차 전환본입니다. 일부 복합 런타임 효과 처리에는 점진적으로 좁힐 수 있는 유연한 타입이 남아 있습니다. 실 브라우저 수동 플레이와 GitHub 서버에서의 실제 배포는 로컬 테스트와 별개로 확인하세요.

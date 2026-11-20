@@ -1,16 +1,19 @@
+declare const module: any;
+// Raid Card Engine V4: TypeScript source (compiled into dist/engine.js).
+// See src/types.ts for public combat model.
 /* Raid Card Prototype - standalone deterministic-ish turn battle engine.
    No dependencies. CommonJS export for tests and browser global for UI. */
-(function (root) {
+(function (root: any) {
   'use strict';
-  const K = {
+  const K: Record<string,string> = {
     ATTACK_UP:'공격력 증가', ATTACK_DOWN:'공격력 감소', DEFENSE_UP:'방어력 증가', DEFENSE_DOWN:'방어력 감소',
     POWER_UP:'위력 증가', POWER_DOWN:'위력 감소', HASTE:'신속', BIND:'속박',
     PROTECTION:'보호', VULNERABLE:'취약', EVADE:'회피', SHIELD:'방어막'
   };
-  const T = { ATTACK:'공격', GUARD:'방어', EVADE:'회피', COUNTER:'반격', SPECIAL:'특수' };
-  const eff = (trigger, keyword, potency, count, target='SELF') => ({trigger,action:'APPLY_KEYWORD',keyword,potency,count,target});
+  const T: Record<string,string> = { ATTACK:'공격', GUARD:'방어', EVADE:'회피', COUNTER:'반격', SPECIAL:'특수' };
+  const eff = (trigger: EffectTrigger, keyword: KeywordId, potency?: number, count?: number, target: EffectTarget='SELF') => ({trigger,action:'APPLY_KEYWORD',keyword,potency,count,target});
   const card = (id,name,type,power,description='',effects=[]) => ({id,name,type,power,description,effects});
-  const HEROES = [
+  const HEROES: HeroTemplate[] = [
     {id:'knight',name:'수호기사',role:'방어 · 가로채기',symbol:'🛡️',maxHp:108,speed:[2,6],color:'#6f9ed9',deck:[
       card('k1','수호의 일격','ATTACK',12,'합 승리 시 공격력 증가 2 · 횟수 2',[eff('ON_CLASH_WIN','ATTACK_UP',2,2)]),
       card('k2','균열 베기','ATTACK',10,'적중 시 대상에게 취약 2 · 횟수 2',[eff('ON_HIT','VULNERABLE',2,2,'TARGET')]),
@@ -42,7 +45,7 @@
       card('m8','쇠약의 파동','ATTACK',11,'적중 시 대상에게 위력 감소 2',[eff('ON_HIT','POWER_DOWN',2,undefined,'TARGET')])
     ]}
   ];
-  const BOSS_MOVES = [
+  const BOSS_MOVES: CardDefinition[] = [
     card('b1','심연의 참격','ATTACK',15,'단일 공격'),
     card('b2','파쇄 일격','ATTACK',19,'강한 단일 공격'),
     card('b3','침식의 발톱','ATTACK',12,'적중 시 취약 1 · 횟수 2',[eff('ON_HIT','VULNERABLE',1,2,'TARGET')]),
@@ -50,14 +53,27 @@
     card('b5','심연의 가호','GUARD',12,'방어막을 생성하고 보호 1 획득',[eff('ON_USE','PROTECTION',1)]),
     card('b6','파멸의 일격','ATTACK',26,'2페이즈 강공격')
   ];
-  const copy = x => JSON.parse(JSON.stringify(x));
-  const clamp = (n,min,max) => Math.min(max,Math.max(min,n));
+  const copy = <A>(x: A): A => JSON.parse(JSON.stringify(x));
+  const clamp = (n: number,min: number,max: number): number => Math.min(max,Math.max(min,n));
+  const boundedKeyword = (n: number): number => clamp(Math.trunc(Number.isFinite(n)?n:0),0,99);
   class RaidBattle {
+    rng: () => number;
+    turn!: number;
+    serial!: number;
+    log!: Array<{turn:number;text:string}>;
+    events!: BattleEvent[];
+    status!: BattleStatus;
+    phase!: number;
+    effectDepth!: number;
+    effectBudget!: number;
+    allies!: Combatant[];
+    boss!: Combatant;
+
     constructor(rng=Math.random) { this.rng=rng; this.reset(); }
     randint(min,max) { return Math.floor(this.rng()*(max-min+1))+min; }
     shuffle(arr) { for(let i=arr.length-1;i>0;i--){let j=this.randint(0,i);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
     reset() {
-      this.turn=0;this.serial=0;this.log=[];this.events=[];this.status='PLANNING';this.phase=1;
+      this.turn=0;this.serial=0;this.log=[];this.events=[];this.status='PLANNING';this.phase=1;this.effectDepth=0;this.effectBudget=0;
       this.allies=HEROES.map(h=>({id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],slots:[]}));
       this.boss={id:'boss',name:'심연의 군주',symbol:'👁️',hp:260,maxHp:260,speed:[3,8],keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
       this.note('전투 시작! 각 캐릭터의 고정 덱으로 보스에 대응하세요.');
@@ -73,43 +89,43 @@
 
     getUnit(id){return id==='boss'?this.boss:this.allies.find(u=>u.id===id);}
     kw(unit,id){return unit.keywords[id]?.potency||0;}
-    apply(unit,id,application={}) {
+    apply(unit: Combatant,id: KeywordId,application: KeywordApplication={}) {
       if(!unit||unit.hp<=0)return;
       if(id==='HASTE'||id==='BIND'){
         const current=unit.pending.find(p=>p.id===id);
-        if(current){current.potency+=application.potency??0;current.count+=application.count??0;}
-        else unit.pending.push({id,potency:application.potency??1,count:application.count??1});
+        if(current){current.potency=boundedKeyword(current.potency+(application.potency??0));current.count=boundedKeyword((current.count??0)+(application.count??0));}
+        else unit.pending.push({id,potency:boundedKeyword(application.potency??1),count:boundedKeyword(application.count??1)});
         this.note(`${unit.name}: ${K[id]} ${application.potency??(current?0:1)} 예약 (다음 턴)`);
         return;
       }
       if(id==='EVADE'){
-        const p=application.potency??1;
+        const p=boundedKeyword(application.potency??1);
         const old=this.kw(unit,'EVADE');
         if(p>old)unit.keywords.EVADE={potency:p,count:null};
         this.note(`${unit.name}: 회피 ${this.kw(unit,'EVADE')} 활성화 (높은 값 유지)`);
         return;
       }
       if(id==='SHIELD'){
-        const p=application.potency??0;
-        unit.keywords.SHIELD={potency:this.kw(unit,'SHIELD')+p,count:null};
+        const p=boundedKeyword(application.potency??0);
+        unit.keywords.SHIELD={potency:boundedKeyword(this.kw(unit,'SHIELD')+p),count:null};
         this.note(`${unit.name}: 방어막 +${p} (총 ${this.kw(unit,'SHIELD')})`);
         return;
       }
       const old=unit.keywords[id];
-      if(old){old.potency+=application.potency??0; old.count+=application.count??0;}
-      else unit.keywords[id]={potency:application.potency??1,count:application.count??1};
+      if(old){old.potency=boundedKeyword(old.potency+(application.potency??0)); old.count=boundedKeyword((old.count??0)+(application.count??0));}
+      else unit.keywords[id]={potency:boundedKeyword(application.potency??1),count:boundedKeyword(application.count??1)};
       this.note(`${unit.name}: ${K[id]||id} [위력 ${unit.keywords[id].potency} / 횟수 ${unit.keywords[id].count}]`);
     }
-    activatePending(unit){
+    activatePending(unit: Combatant){
       const pending=unit.pending;unit.pending=[];
       for(const k of pending){
         const old=unit.keywords[k.id];
-        if(old){old.potency+=k.potency;old.count+=k.count;}
-        else unit.keywords[k.id]={potency:k.potency,count:k.count};
+        if(old){old.potency=boundedKeyword(old.potency+k.potency);old.count=boundedKeyword((old.count??0)+(k.count??0));}
+        else unit.keywords[k.id]={potency:boundedKeyword(k.potency),count:k.count===null?null:boundedKeyword(k.count)};
         this.note(`${unit.name}: 예약된 ${K[k.id]} ${k.potency} 활성화`);
       }
     }
-    speedFor(unit){return Math.max(1,this.randint(...unit.speed)+this.kw(unit,'HASTE')-this.kw(unit,'BIND'));}
+    speedFor(unit){return Math.max(1,this.randint(unit.speed[0],unit.speed[1])+this.kw(unit,'HASTE')-this.kw(unit,'BIND'));}
     draw(unit,n){
       for(let i=0;i<n;i++){
         if(!unit.deck.length){if(!unit.discard.length)break;unit.deck=this.shuffle(unit.discard.splice(0));}
@@ -118,10 +134,11 @@
     }
     startTurn(){
       if(this.status==='WON'||this.status==='LOST')return;
-      this.turn++;this.status='PLANNING';this.phase=this.boss.hp<=130?2:1;
+      this.turn++;this.effectBudget=0;this.status='PLANNING';this.phase=this.boss.hp<=130?2:1;
       this.note(`──── ${this.turn}턴 시작 / 보스 ${this.phase}페이즈 ────`);
       this.emit('TURN_START',{turn:this.turn});
       for(const u of [...this.allies,this.boss])this.activatePending(u);
+      this.runLifecycleEffects('ON_TURN_START');
       for(const unit of this.allies){
         unit.slots=unit.hp>0?Array.from({length:2},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null})):[];
         if(unit.hp>0)this.draw(unit,4);
@@ -166,9 +183,23 @@
         ['GUARD','EVADE','COUNTER'].includes(c.type)?this.kw(unit,'DEFENSE_UP')-this.kw(unit,'DEFENSE_DOWN'):0;
       return Math.max(0,c.power+typeBonus+this.kw(unit,'POWER_UP')-this.kw(unit,'POWER_DOWN'));
     }
+    // Opt-in passive effects: only scope:'OWNED' subscriptions, once per card
+    // definition per owner. Default card effects fire only when a card is used.
+    runLifecycleEffects(trigger) {
+      for(const owner of [...this.allies,this.boss]) {
+        if(owner.hp<=0)continue;
+        const owned=owner.id==='boss'?BOSS_MOVES:owner.deck.concat(owner.hand,owner.discard);
+        const seen=new Set();
+        for(const c of owned){
+          if(seen.has(c.id))continue;
+          seen.add(c.id);
+          this.runEffects(c,trigger,owner,owner,{passiveOnly:true});
+        }
+      }
+    }
     // Effects are declarative: event -> optional conditions -> ordered actions.
     // Priority: higher first; original order breaks ties, for deterministic replay.
-    effectConditionsMet(conditions,owner,target,extra={}) {
+    effectConditionsMet(conditions,owner,target,extra: any={}) {
       return (conditions||[]).every(condition=>{
         const unit=condition.target==='TARGET'?target:owner;
         if(!unit)return false;
@@ -178,52 +209,115 @@
           case 'HP_AT_MOST_PERCENT': return unit.hp*100<=unit.maxHp*condition.value;
           case 'HP_AT_LEAST_PERCENT': return unit.hp*100>=unit.maxHp*condition.value;
           case 'DAMAGE_AT_LEAST': return (extra.hpDamage??0)>=condition.value;
+          case 'SHIELD_AT_LEAST': return this.kw(unit,'SHIELD')>=condition.value;
+          case 'TURN_AT_LEAST': return this.turn>=condition.value;
+          case 'TURN_AT_MOST': return this.turn<=condition.value;
+          case 'KEYWORD_COUNT_AT_LEAST': return (unit.keywords[condition.keyword]?.count??0)>=condition.value;
+          case 'TARGET_ALIVE': return unit.hp>0;
           default: return false; // Unknown conditions must not silently pass.
         }
       });
     }
-    modifyKeyword(unit,id,change={}) {
+    modifyKeyword(unit: Combatant,id: KeywordId,change: KeywordApplication={}) {
       const current=unit?.keywords[id];
       if(!current)return;
-      if(change.potency!==undefined)current.potency=Math.max(0,current.potency+change.potency);
-      if(change.count!==undefined && current.count!=null)current.count=Math.max(0,current.count+change.count);
+      if(change.potency!==undefined)current.potency=boundedKeyword(current.potency+change.potency);
+      if(change.count!==undefined && current.count!=null)current.count=boundedKeyword(current.count+change.count);
       if(current.potency===0 || current.count===0){
         delete unit.keywords[id];
         if(id==='EVADE')unit.evadeSource=null;
       }
       this.note(`${unit.name}: ${K[id]||id} 변경 (위력 ${this.kw(unit,id)}, 횟수 ${unit.keywords[id]?.count??'없음'})`);
     }
-    executeEffectAction(fx,owner,target,extra={}) {
-      const dst=fx.target==='TARGET'?target:fx.target==='ATTACKER'?extra.attacker:owner;
-      if(!dst)return;
-      if(fx.action==='APPLY_KEYWORD')this.apply(dst,fx.keyword,{potency:fx.potency,count:fx.count});
-      else if(fx.action==='MODIFY_KEYWORD')this.modifyKeyword(dst,fx.keyword,{potency:fx.potency,count:fx.count});
-      else if(fx.action==='REMOVE_KEYWORD'){
-        delete dst.keywords[fx.keyword];
-        if(fx.keyword==='EVADE')dst.evadeSource=null;
-        this.note(`${dst.name}: ${K[fx.keyword]||fx.keyword} 제거`);
-      }else if(fx.action==='HEAL'){
-        if(dst.hp<=0)return; // Healing cannot revive a defeated unit.
-        const amount=Math.max(0,fx.value||0);
-        const healed=Math.min(amount,dst.maxHp-dst.hp);
-        dst.hp+=healed;
-        this.note(`${dst.name}: 체력 +${healed}`);
+    resolveEffectTargets(mode,owner,target,extra: any={}) {
+      switch(mode||'SELF') {
+        case 'SELF': return [owner];
+        case 'TARGET': return target?[target]:[];
+        case 'ATTACKER': return extra.attacker?[extra.attacker]:[];
+        case 'ALL_ALLIES': return owner.id==='boss'?[this.boss]:this.allies.filter(u=>u.hp>0);
+        case 'ALL_ENEMIES': return owner.id==='boss'?this.allies.filter(u=>u.hp>0):this.boss.hp>0?[this.boss]:[];
+        default: return [];
       }
     }
-    runEffects(c,trigger,owner,target,extra={}) {
-      if(!c?.effects)return;
-      const effects=c.effects.map((fx,index)=>({fx,index}))
-        .filter(({fx})=>fx.trigger===trigger)
-        .sort((a,b)=>(b.fx.priority??0)-(a.fx.priority??0)||a.index-b.index);
-      for(const {fx} of effects){
-        if(!this.effectConditionsMet(fx.conditions,owner,target,extra))continue;
-        this.emit('EFFECT_TRIGGERED',{trigger,cardId:c.id,ownerId:owner.id});
-        const actions=fx.actions??[fx];
-        for(const action of actions){
-          // Parent-level target is inherited by actions unless overridden.
-          this.executeEffectAction({...fx,...action},owner,target,extra);
+    // Effect damage is a separate damage instance, not a new card hit.
+    // This avoids recursive ON_HIT and counter chains. It respects protect,
+    // vulnerable and shield, but does not trigger attack-specific effects.
+    dealEffectDamage(source,target,amount,fx: any={}) {
+      if(!target||target.hp<=0)return;
+      const base=Math.max(0,Math.floor(amount));
+      const mult=fx.ignoreMitigation?1:Math.max(0,1+.1*(this.kw(target,'VULNERABLE')-this.kw(target,'PROTECTION')));
+      const damage=Math.max(0,Math.floor(base*mult+1e-9));
+      const blocked=fx.ignoreShield?0:Math.min(damage,this.kw(target,'SHIELD'));
+      if(blocked){target.keywords.SHIELD.potency-=blocked;if(target.keywords.SHIELD.potency<=0)delete target.keywords.SHIELD;}
+      const hpDamage=damage-blocked;
+      target.hp=Math.max(0,target.hp-hpDamage);
+      this.note(`${source.name}의 추가 효과 → ${target.name}: 피해 ${damage}, 방어막 -${blocked}, 체력 -${hpDamage}`);
+      this.emit('EFFECT_DAMAGE',{ownerId:source.id,targetId:target.id,damage,blocked,hpDamage});
+      if(hpDamage>0)this.emit('HP_DAMAGED',{targetId:target.id,amount:hpDamage,source:'EFFECT'});
+      if(target.hp===0)this.note(`✦ ${target.name} 전투 불능`);
+    }
+    executeEffectAction(fx,owner,target,extra: any={}) {
+      const destinations=this.resolveEffectTargets(fx.target,owner,target,extra);
+      for(const dst of destinations) {
+        if(!dst)continue;
+        switch(fx.action){
+          case 'APPLY_KEYWORD':
+            this.apply(dst,fx.keyword,{potency:fx.potency,count:fx.count});break;
+          case 'MODIFY_KEYWORD':
+            this.modifyKeyword(dst,fx.keyword,{potency:fx.potency,count:fx.count});break;
+          case 'REMOVE_KEYWORD':
+            delete dst.keywords[fx.keyword];
+            if(fx.keyword==='EVADE')dst.evadeSource=null;
+            this.note(`${dst.name}: ${K[fx.keyword]||fx.keyword} 제거`);break;
+          case 'HEAL': {
+            if(dst.hp<=0)break;
+            const healed=Math.min(Math.max(0,Math.floor(fx.value??0)),dst.maxHp-dst.hp);
+            dst.hp+=healed;
+            this.note(`${dst.name}: 체력 +${healed}`);
+            this.emit('HEALED',{ownerId:owner.id,targetId:dst.id,amount:healed});
+            break;
+          }
+          case 'DRAW_CARDS': {
+            if(dst.id==='boss'||dst.hp<=0)break;
+            const count=Math.max(0,Math.min(20,Math.floor(fx.value??1)));
+            const before=dst.hand.length;
+            this.draw(dst,count);
+            this.note(`${dst.name}: 카드 ${dst.hand.length-before}장 드로우`);
+            this.emit('CARDS_DRAWN',{ownerId:owner.id,targetId:dst.id,count:dst.hand.length-before});
+            break;
+          }
+          case 'DEAL_DAMAGE':
+            this.dealEffectDamage(owner,dst,fx.value??0,fx);break;
+          default:
+            this.emit('INVALID_EFFECT_ACTION',{cardId:extra.cardId??null,action:fx.action});
+            this.note(`알 수 없는 효과 명령: ${fx.action}`);
         }
       }
+    }
+    runEffects(c,trigger,owner,target,extra: any={}) {
+      if(!c?.effects)return;
+      const effects=c.effects.map((fx,index)=>({fx,index}))
+        .filter(({fx})=>fx.trigger===trigger && (!extra.passiveOnly || fx.scope==='OWNED') && (extra.passiveOnly || fx.scope!=='OWNED'))
+        .sort((a,b)=>(b.fx.priority??0)-(a.fx.priority??0)||a.index-b.index);
+      if(!effects.length)return;
+      if(this.effectDepth>=16 || this.effectBudget>=500){
+        this.emit('EFFECT_LIMIT',{trigger,cardId:c.id});
+        this.note('연쇄 효과 실행 제한에 도달해 추가 발동을 중단했습니다.');
+        return;
+      }
+      this.effectDepth++;
+      try {
+        for(const {fx} of effects){
+          if(this.effectBudget>=500){this.emit('EFFECT_LIMIT',{trigger,cardId:c.id});break;}
+          if(!this.effectConditionsMet(fx.conditions,owner,target,extra))continue;
+          this.effectBudget++;
+          this.emit('EFFECT_TRIGGERED',{trigger,cardId:c.id,ownerId:owner.id});
+          const actions=fx.actions??[fx];
+          for(const action of actions){
+            this.executeEffectAction({...fx,...action},owner,target,{...extra,cardId:c.id});
+          }
+        }
+      } finally {this.effectDepth--;}
     }
     activate(c,owner,target){
       this.note(`${owner.name}: [${c.name}] 사용`);
@@ -262,7 +356,7 @@
       const sources=[unit.evadeSource?.card,unit.counter?.card].filter(Boolean);
       return sources.filter((card,i)=>sources.findIndex(c=>c.id===card.id)===i);
     }
-    dealAttack(attacker,target,c,options={}) {
+    dealAttack(attacker,target,c,options: {isCounter?:boolean}={}) {
       if(attacker.hp<=0||target.hp<=0)return;
       // ON_USE and clash effects have already fired. Recalculate live power
       // immediately before the damage step, per the agreed combat rule.
@@ -298,6 +392,7 @@
         for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_DAMAGED',target,attacker,extra);
       }
       this.runEffects(c,'AFTER_DAMAGE',attacker,target,extra);
+      if(target.hp<=0)this.runEffects(c,'ON_KILL',attacker,target,extra);
       if(target.hp<=0)this.note(`✦ ${target.name} 전투 불능`);
       // A hit that deals 0 HP damage through a shield still triggers counter.
       if(!options.isCounter&&target.hp>0&&attacker.hp>0&&target.counter?.remaining>0){
@@ -366,7 +461,7 @@
       this.status='RESOLVING';
       const assigned=this.allies.flatMap(u=>u.slots).filter(s=>s.cardUid);
       const matched=new Map(assigned.filter(s=>s.targetIntentId).map(s=>[s.targetIntentId,s]));
-      const events=[];
+      const events: any[]=[];
       for(const intent of this.boss.intents){
         const pair=matched.get(intent.id);
         events.push({kind:pair?'LINKED':'BOSS',speed:Math.max(intent.speed,pair?.speed??0),intent,pair,tie:this.rng()});
@@ -392,6 +487,7 @@
     endTurn(){
       this.note('──── 턴 종료: 키워드 정리 ────');
       this.emit('TURN_END',{turn:this.turn});
+      this.runLifecycleEffects('ON_TURN_END');
       for(const unit of [...this.allies,this.boss]){
         for(const [id,k] of Object.entries(unit.keywords)){
           if(k.count===null || k.count===undefined){delete unit.keywords[id];continue;}
@@ -403,7 +499,35 @@
     }
     nextTurn(){if(this.status==='REVIEW')this.startTurn();}
   }
-  const api={RaidBattle,HEROES,K,T};
+  // Lightweight data validation before adding authored cards to fixed decks.
+  const CARD_TYPES=new Set(Object.keys(T));
+  const TRIGGERS=new Set(['ON_BATTLE_START','ON_TURN_START','ON_TURN_END','ON_USE','ON_CLASH_START','ON_CLASH_WIN','ON_CLASH_LOSE','ON_CLASH_DRAW','BEFORE_ATTACK','BEFORE_DAMAGE','ON_HIT','AFTER_DAMAGE','ON_ATTACKED','ON_HIT_TAKEN','ON_DAMAGED','ON_EVADE_SUCCESS','ON_EVADE_FAIL','ON_KILL']);
+  const ACTIONS=new Set(['APPLY_KEYWORD','MODIFY_KEYWORD','REMOVE_KEYWORD','HEAL','DRAW_CARDS','DEAL_DAMAGE']);
+  const TARGETS=new Set(['SELF','TARGET','ATTACKER','ALL_ALLIES','ALL_ENEMIES']);
+  function validateCard(c){
+    const errors=[];
+    if(!c||typeof c!=='object')return ['카드 데이터가 객체가 아닙니다.'];
+    if(typeof c.id!=='string'||!c.id)errors.push('id가 필요합니다.');
+    if(!CARD_TYPES.has(c.type))errors.push(`알 수 없는 타입: ${c.type}`);
+    if(!Number.isFinite(c.power)||c.power<0)errors.push('power는 0 이상의 유한 숫자여야 합니다.');
+    if(!Array.isArray(c.effects))errors.push('effects는 배열이어야 합니다.');
+    else c.effects.forEach((e,i)=>{
+      if(!TRIGGERS.has(e.trigger))errors.push(`effects[${i}] 잘못된 trigger: ${e.trigger}`);
+      if(e.scope!==undefined && e.scope!=='OWNED')errors.push(`effects[${i}] 잘못된 scope`);
+      if(e.priority!==undefined && !Number.isFinite(e.priority))errors.push(`effects[${i}] 잘못된 priority`);
+      const acts=Array.isArray(e.actions)?e.actions:[e];
+      if(!acts.length)errors.push(`effects[${i}] 비어 있는 actions`);
+      acts.forEach((a,j)=>{
+        if(!ACTIONS.has(a.action))errors.push(`effects[${i}].actions[${j}] 알 수 없는 action: ${a.action}`);
+        const target=a.target??e.target??'SELF';
+        if(!TARGETS.has(target))errors.push(`effects[${i}].actions[${j}] 알 수 없는 target: ${target}`);
+        if(['APPLY_KEYWORD','MODIFY_KEYWORD','REMOVE_KEYWORD'].includes(a.action)&&typeof (a.keyword??e.keyword)!=='string')errors.push(`effects[${i}].actions[${j}] keyword 필요`);
+        if(['DEAL_DAMAGE','HEAL','DRAW_CARDS'].includes(a.action)&&(!Number.isFinite(a.value??e.value)||(a.value??e.value)<0))errors.push(`effects[${i}].actions[${j}] value는 0 이상의 숫자여야 함`);
+      });
+    });
+    return errors;
+  }
+  const api={RaidBattle,HEROES,K,T,validateCard,boundedKeyword};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RaidEngine=api;
 })(typeof window!=='undefined'?window:globalThis);

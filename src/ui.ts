@@ -1,15 +1,15 @@
 (() => {
   'use strict';
-  const {RaidBattle,K,T}=window.RaidEngine;
+  const {RaidBattle,K,T}=(window as any).RaidEngine;
   let game=new RaidBattle();
   let selectedSlotId=game.allies[0].slots[0].id;
-  let toastTimeout;
-  const $=id=>document.getElementById(id);
-  const escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const typeGlyph={ATTACK:'◆',GUARD:'⬡',EVADE:'◌',COUNTER:'↶',SPECIAL:'✦'};
-  const classForK=id=>['VULNERABLE','BIND','ATTACK_DOWN','POWER_DOWN','DEFENSE_DOWN'].includes(id)?'bad':['HASTE','ATTACK_UP','DEFENSE_UP','POWER_UP','PROTECTION','SHIELD','EVADE'].includes(id)?'good':'';
-  function statuses(u){
-    const items=Object.entries(u.keywords).map(([id,v])=>`<span class="keyword ${classForK(id)}" title="위력 / 횟수">${escapeHTML(K[id]||id)} ${v.potency}${v.count==null?'':` · ${v.count}회`}</span>`);
+  let toastTimeout: ReturnType<typeof setTimeout> | undefined;
+  const $=(id:string)=>document.getElementById(id)! as HTMLElement & {disabled:boolean};
+  const escapeHTML=(s:unknown)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const typeGlyph: Record<string,string>={ATTACK:'◆',GUARD:'⬡',EVADE:'◌',COUNTER:'↶',SPECIAL:'✦'};
+  const classForK=(id:string)=>['VULNERABLE','BIND','ATTACK_DOWN','POWER_DOWN','DEFENSE_DOWN'].includes(id)?'bad':['HASTE','ATTACK_UP','DEFENSE_UP','POWER_UP','PROTECTION','SHIELD','EVADE'].includes(id)?'good':'';
+  function statuses(u: any){
+    const items=Object.entries(u.keywords as Record<string, KeywordInstance>).map(([id,v])=>`<span class="keyword ${classForK(id)}" title="위력 / 횟수">${escapeHTML(K[id]||id)} ${v.potency}${v.count==null?'':` · ${v.count}회`}</span>`);
     for(const p of u.pending)items.push(`<span class="keyword pending">${escapeHTML(K[p.id])} ${p.potency} 예약</span>`);
     if(u.counter?.remaining>0)items.push('<span class="keyword good">반격 대기</span>');
     return items.length?items.join(''):'<span class="muted small">활성 키워드 없음</span>';
@@ -17,15 +17,15 @@
   function allSlots(){return game.allies.flatMap(u=>u.slots);}
   function selected(){return allSlots().find(s=>s.id===selectedSlotId)||null;}
   function selectionHero(){return selected()?game.getUnit(selected().ownerId):game.allies.find(u=>u.hp>0)||game.allies[0];}
-  function toast(message){const el=$('toast');el.textContent=message;el.classList.remove('hidden');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>el.classList.add('hidden'),3100);}
-  function render(){
+  function toast(message: string){const el=$('toast');el.textContent=message;el.classList.remove('hidden');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>el.classList.add('hidden'),3100);}
+  function render(): void{
     const isPlanning=game.status==='PLANNING';
     $('turnBadge').textContent=`TURN ${game.turn}`;
     $('phaseBadge').textContent=`PHASE ${game.phase}`;
     $('bossHpText').textContent=`${game.boss.hp} / ${game.boss.maxHp}`;
     $('bossHpBar').style.width=`${Math.max(0,100*game.boss.hp/game.boss.maxHp)}%`;
     $('bossStatus').innerHTML=statuses(game.boss);
-    const intentLinks=new Map(allSlots().filter(s=>s.targetIntentId).map(s=>[s.targetIntentId,s]));
+    const intentLinks: Map<string, any>=new Map(allSlots().filter(s=>s.targetIntentId).map(s=>[s.targetIntentId,s]));
     $('intents').innerHTML=game.boss.intents.map((x,i)=>{
       const linked=intentLinks.get(x.id);
       return `<button class="intent ${linked?'linked':''}" data-intent="${escapeHTML(x.id)}" ${!isPlanning?'disabled':''}>
@@ -64,12 +64,12 @@
     $('combatLog').scrollTop=$('combatLog').scrollHeight;
   }
   document.addEventListener('click',ev=>{
-    const slotEl=ev.target.closest('[data-slot]');
+    const slotEl=(ev.target as HTMLElement).closest<HTMLButtonElement>('[data-slot]');
     if(slotEl){selectedSlotId=slotEl.dataset.slot;render();return;}
-    const cardEl=ev.target.closest('[data-card]');
+    const cardEl=(ev.target as HTMLElement).closest<HTMLButtonElement>('[data-card]');
     if(cardEl){const s=selected();if(!s){toast('아군의 행동 슬롯을 먼저 선택하세요.');return;}
       const result=game.assignCard(s.id,cardEl.dataset.card);if(!result.ok)toast(result.reason);render();return;}
-    const intentEl=ev.target.closest('[data-intent]');
+    const intentEl=(ev.target as HTMLElement).closest<HTMLButtonElement>('[data-intent]');
     if(intentEl){const s=selected();if(!s){toast('먼저 아군 슬롯을 선택하세요.');return;}
       const result=game.linkIntent(s.id,intentEl.dataset.intent);if(!result.ok)toast(result.reason);render();return;}
   });
