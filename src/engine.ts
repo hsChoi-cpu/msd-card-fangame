@@ -1,5 +1,5 @@
 declare const module: any;
-// Raid Card Engine V4: TypeScript source (compiled into dist/engine.js).
+// Raid Card Engine V5: TypeScript source (compiled into dist/engine.js).
 // See src/types.ts for public combat model.
 /* Raid Card Prototype - standalone deterministic-ish turn battle engine.
    No dependencies. CommonJS export for tests and browser global for UI. */
@@ -12,7 +12,7 @@ declare const module: any;
   };
   const T: Record<string,string> = { ATTACK:'공격', GUARD:'방어', EVADE:'회피', COUNTER:'반격', SPECIAL:'특수' };
   const eff = (trigger: EffectTrigger, keyword: KeywordId, potency?: number, count?: number, target: EffectTarget='SELF') => ({trigger,action:'APPLY_KEYWORD',keyword,potency,count,target});
-  const card = (id,name,type,power,description='',effects=[]) => ({id,name,type,power,description,effects});
+  const card = (id,name,type,power,description='',effects=[]) => ({id,name,type,power,description,effects,manaCost: type==='ATTACK'?(power>=15?3:2):type==='EVADE'?(power>=15?3:2):type==='COUNTER'?(power>=15?3:2):type==='GUARD'?(power>=15?2:1):0});
   const HEROES: HeroTemplate[] = [
     {id:'knight',name:'수호기사',role:'방어 · 가로채기',symbol:'🛡️',maxHp:108,speed:[2,6],color:'#6f9ed9',deck:[
       card('k1','수호의 일격','ATTACK',12,'합 승리 시 공격력 증가 2 · 횟수 2',[eff('ON_CLASH_WIN','ATTACK_UP',2,2)]),
@@ -45,6 +45,42 @@ declare const module: any;
       card('m8','쇠약의 파동','ATTACK',11,'적중 시 대상에게 위력 감소 2',[eff('ON_HIT','POWER_DOWN',2,undefined,'TARGET')])
     ]}
   ];
+  const copy = <A>(x: A): A => JSON.parse(JSON.stringify(x));
+  // Every character has 10 physical cards spanning 6 fixed definitions.
+  // Four definitions occur twice, and two definitions occur once (4*2+2=10).
+  function fixedDeck(seed: CardDefinition[]): CardDefinition[] {
+    const selected=seed.slice(0,6);
+    return [...selected.slice(0,4),...selected.slice(0,4),...selected.slice(4,6)].map(c=>copy(c));
+  }
+  for(const h of HEROES) h.deck=fixedDeck(h.deck);
+  const expansion: Array<{id:string;name:string;role:string;symbol:string;maxHp:number;speed:number[];color:string;from:number}> = [
+    {id:'priest',name:'별빛 사제',role:'치유 · 수비',symbol:'✨',maxHp:88,speed:[2,6],color:'#a6cf98',from:0},
+    {id:'ranger',name:'황혼 사수',role:'집중 공격',symbol:'🏹',maxHp:80,speed:[4,8],color:'#d8b472',from:1},
+    {id:'scholar',name:'룬 연구가',role:'마력 · 지원',symbol:'📜',maxHp:84,speed:[3,7],color:'#8dc6cc',from:2}
+  ];
+  for(const h of expansion){
+    const src=HEROES[h.from];
+    HEROES.push({id:h.id,name:h.name,role:h.role,symbol:h.symbol,maxHp:h.maxHp,speed:h.speed,color:h.color,
+      deck:src.deck.map(c=>({...copy(c),id:c.id+'_'+h.id}))});
+  }
+  const MANA: Record<string,{max:number;regen:number}> = {
+    knight:{max:12,regen:3}, rogue:{max:11,regen:4}, mage:{max:14,regen:4},
+    priest:{max:13,regen:4}, ranger:{max:12,regen:3}, scholar:{max:15,regen:5}
+  };
+  const PASSIVES: Record<string,CardDefinition> = {
+    knight: card('passive-knight','수호의 맹세','SPECIAL',0,'합 패배 시 마력 1 회복',[
+      {trigger:'ON_CLASH_LOSE',action:'RESTORE_MANA',value:1}]),
+    rogue: card('passive-rogue','민첩한 발놀림','SPECIAL',0,'회피 성공 시 다음 턴 신속 1 예약',[
+      {trigger:'ON_EVADE_SUCCESS',action:'APPLY_KEYWORD',keyword:'HASTE',potency:1}]),
+    mage: card('passive-mage','마력 순환','SPECIAL',0,'합 승리 시 마력 1 회복',[
+      {trigger:'ON_CLASH_WIN',action:'RESTORE_MANA',value:1}]),
+    priest: card('passive-priest','별의 가호','SPECIAL',0,'턴 시작 시 체력 2 회복',[
+      {trigger:'ON_TURN_START',action:'HEAL',value:2}]),
+    ranger: card('passive-ranger','집중 사격','SPECIAL',0,'합 승리 시 다음 턴 신속 1 예약',[
+      {trigger:'ON_CLASH_WIN',action:'APPLY_KEYWORD',keyword:'HASTE',potency:1}]),
+    scholar: card('passive-scholar','마력 재활용','SPECIAL',0,'턴 시작 시 추가 마력 1 회복',[
+      {trigger:'ON_TURN_START',action:'RESTORE_MANA',value:1}])
+  };
   const BOSS_MOVES: CardDefinition[] = [
     card('b1','심연의 참격','ATTACK',15,'단일 공격'),
     card('b2','파쇄 일격','ATTACK',19,'강한 단일 공격'),
@@ -53,7 +89,6 @@ declare const module: any;
     card('b5','심연의 가호','GUARD',12,'방어막을 생성하고 보호 1 획득',[eff('ON_USE','PROTECTION',1)]),
     card('b6','파멸의 일격','ATTACK',26,'2페이즈 강공격')
   ];
-  const copy = <A>(x: A): A => JSON.parse(JSON.stringify(x));
   const clamp = (n: number,min: number,max: number): number => Math.min(max,Math.max(min,n));
   const boundedKeyword = (n: number): number => clamp(Math.trunc(Number.isFinite(n)?n:0),0,99);
   class RaidBattle {
@@ -68,16 +103,65 @@ declare const module: any;
     effectBudget!: number;
     allies!: Combatant[];
     boss!: Combatant;
+    partyIds: string[];
+    maxPartySize: number;
 
-    constructor(rng=Math.random) { this.rng=rng; this.reset(); }
+    constructor(rng:()=>number=Math.random, options: {partyIds?:string[];maxPartySize?:number}={}) {
+      this.rng=rng;
+      this.maxPartySize=options.maxPartySize??6;
+      this.partyIds=options.partyIds??['knight','rogue','mage'];
+      this.reset();
+    }
+    passive(owner:Combatant,trigger:EffectTrigger,target:Combatant=owner,extra:any={}) {
+      if(owner?.hp>0 && owner.id!=='boss' && owner.passive) {
+        this.runEffects(owner.passive,trigger,owner,target,extra);
+      }
+    }
+    restoreMana(unit:Combatant, amount:number):number {
+      if(unit.id==='boss'||unit.hp<=0)return 0;
+      const before=unit.mana;
+      unit.mana=clamp(unit.mana+Math.max(0,Math.floor(amount)),0,unit.maxMana);
+      return unit.mana-before;
+    }
+    totalPlannedMana(hero:Combatant,excludedSlotId?:string):number {
+      return (hero.slots||[]).reduce((sum,s)=>{
+        if(s.id===excludedSlotId)return sum;
+        const c=this.cardForSlot(s);
+        return sum+(c?.manaCost??0);
+      },0);
+    }
+    // The reservation is checked at planning; payment occurs only upon execution.
+    consumeAction(slot:any):boolean {
+      const hero=this.getUnit(slot.ownerId);
+      const c=this.cardForSlot(slot);
+      if(!hero||!c||hero.hp<=0)return false;
+      const cost=c.manaCost??0;
+      if(hero.mana<cost){this.note(`${hero.name}: [${c.name}] 마력 부족으로 사용 취소`);return false;}
+      hero.mana-=cost;
+      hero.usedThisTurn=(hero.usedThisTurn??0)+1;
+      // Keep card in hand during resolution so cardForSlot can resolve it;
+      // commit the move to discard when the action resolves.
+      slot._executingCard=c;
+      this.note(`${hero.name}: 마력 -${cost} (${hero.mana}/${hero.maxMana})`);
+      return true;
+    }
     randint(min,max) { return Math.floor(this.rng()*(max-min+1))+min; }
     shuffle(arr) { for(let i=arr.length-1;i>0;i--){let j=this.randint(0,i);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
     reset() {
       this.turn=0;this.serial=0;this.log=[];this.events=[];this.status='PLANNING';this.phase=1;this.effectDepth=0;this.effectBudget=0;
-      this.allies=HEROES.map(h=>({id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],slots:[]}));
+      if(!Number.isInteger(this.maxPartySize)||this.maxPartySize<1||this.maxPartySize>6)throw new Error('최대 출전 수는 1~6이어야 합니다.');
+      if(!this.partyIds.length||this.partyIds.length>this.maxPartySize||new Set(this.partyIds).size!==this.partyIds.length)throw new Error('출전 인원/중복 편성이 올바르지 않습니다.');
+      const selected=this.partyIds.map(id=>{
+        const found=HEROES.find(h=>h.id===id);
+        if(!found)throw new Error(`알 수 없는 캐릭터: ${id}`);
+        return found;
+      });
+      this.allies=selected.map(h=>({id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,
+        maxMana:MANA[h.id].max,mana:MANA[h.id].max,manaRegen:MANA[h.id].regen,usedThisTurn:0,lastTurnUsed:0,passive:copy(PASSIVES[h.id]),
+        deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],slots:[]}));
       this.boss={id:'boss',name:'심연의 군주',symbol:'👁️',hp:260,maxHp:260,speed:[3,8],keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
       this.note('전투 시작! 각 캐릭터의 고정 덱으로 보스에 대응하세요.');
-      for(const unit of this.allies){for(const c of [...unit.deck])this.runEffects(c,'ON_BATTLE_START',unit,unit,{silent:true});}
+      for(const unit of this.allies){for(const c of [...unit.deck])this.runEffects(c,'ON_BATTLE_START',unit,unit,{silent:true});this.passive(unit,'ON_BATTLE_START');}
       this.startTurn();
     }
     note(s){this.log.push({turn:this.turn,text:s});}
@@ -138,10 +222,23 @@ declare const module: any;
       this.note(`──── ${this.turn}턴 시작 / 보스 ${this.phase}페이즈 ────`);
       this.emit('TURN_START',{turn:this.turn});
       for(const u of [...this.allies,this.boss])this.activatePending(u);
+      if(this.turn>1)for(const unit of this.allies)if(unit.hp>0){
+        const actual=this.restoreMana(unit,unit.manaRegen);
+        this.note(`${unit.name}: 자연 마력 회복 +${actual} (${unit.mana}/${unit.maxMana})`);
+      }
       this.runLifecycleEffects('ON_TURN_START');
-      for(const unit of this.allies){
-        unit.slots=unit.hp>0?Array.from({length:2},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null})):[];
-        if(unit.hp>0)this.draw(unit,4);
+      for(const unit of this.allies)this.passive(unit,'ON_TURN_START');
+      const count=this.allies.length;
+      const minimum=Math.floor(this.maxPartySize/count), extra=this.maxPartySize%count;
+      for(const [index,unit] of this.allies.entries()){
+        const slotCount=minimum+(index<extra?1:0);
+        unit.slots=unit.hp>0?Array.from({length:slotCount},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null})):[];
+        unit.usedThisTurn=0;
+        if(unit.hp>0){
+          const n=this.turn===1?unit.slots.length+2:unit.lastTurnUsed;
+          this.draw(unit,n);
+          this.note(`${unit.name}: ${n}장 드로우 요청 (손패 ${unit.hand.length}장)`);
+        }
       }
       const phase=this.phase;
       this.boss.intents=Array.from({length:phase===1?3:4},(_,i)=>{
@@ -159,6 +256,11 @@ declare const module: any;
       if(!hero||hero.hp<=0)return {ok:false,reason:'선택할 수 없는 슬롯입니다.'};
       const c=hero.hand.find(x=>x.uid===cardUid);
       if(!c)return {ok:false,reason:'해당 카드가 손패에 없습니다.'};
+      const proposed=this.totalPlannedMana(hero,slotId)+(c.manaCost??0);
+      // Moving the same physical card from another slot is free of double reservation.
+      const previous=hero.slots.find(s=>s.cardUid===cardUid && s.id!==slotId);
+      const net=proposed-(previous?(c.manaCost??0):0);
+      if(net>hero.mana)return {ok:false,reason:`마력이 부족합니다. 배치 비용 ${net} / 보유 ${hero.mana}`};
       for(const s of hero.slots)if(s.cardUid===cardUid){s.cardUid=null;s.targetIntentId=null;}
       let slot=hero.slots.find(s=>s.id===slotId);
       slot.cardUid=cardUid;slot.targetIntentId=null;
@@ -269,6 +371,13 @@ declare const module: any;
             delete dst.keywords[fx.keyword];
             if(fx.keyword==='EVADE')dst.evadeSource=null;
             this.note(`${dst.name}: ${K[fx.keyword]||fx.keyword} 제거`);break;
+          case 'RESTORE_MANA': {
+            if(dst.id==='boss'||dst.hp<=0)break;
+            const restored=this.restoreMana(dst,fx.value??0);
+            this.note(`${dst.name}: 마력 +${restored} (${dst.mana}/${dst.maxMana})`);
+            this.emit('MANA_RESTORED',{ownerId:owner.id,targetId:dst.id,amount:restored});
+            break;
+          }
           case 'HEAL': {
             if(dst.hp<=0)break;
             const healed=Math.min(Math.max(0,Math.floor(fx.value??0)),dst.maxHp-dst.hp);
@@ -323,6 +432,7 @@ declare const module: any;
       this.note(`${owner.name}: [${c.name}] 사용`);
       this.emit('CARD_USED',{ownerId:owner.id,cardId:c.id,targetId:target?.id??null});
       this.runEffects(c,'ON_USE',owner,target);
+      this.passive(owner,'ON_USE',target);
       const power=this.finalPower(owner,c);
       if(c.type==='GUARD')this.apply(owner,'SHIELD',{potency:power});
       if(c.type==='EVADE'){
@@ -344,12 +454,14 @@ declare const module: any;
         this.note(`${owner.name}: 회피 성공 (${ownPower} ≥ ${incomingPower})`);
         this.emit('EVADE_SUCCESS',{ownerId:owner.id,incomingPower});
         this.runEffects(source,'ON_EVADE_SUCCESS',owner,owner);
+        this.passive(owner,'ON_EVADE_SUCCESS',owner);
         return true;
       }
       this.note(`${owner.name}: 회피 실패 (${ownPower} < ${incomingPower}) → 회피 소멸`);
       this.emit('EVADE_FAIL',{ownerId:owner.id,incomingPower});
       delete owner.keywords.EVADE;owner.evadeSource=null;
       this.runEffects(source,'ON_EVADE_FAIL',owner,owner);
+      this.passive(owner,'ON_EVADE_FAIL',owner);
       return false;
     }
     reactionCards(unit) {
@@ -386,6 +498,7 @@ declare const module: any;
       // vulnerability affects only subsequent damage instances.
       const extra={attacker,hpDamage,blocked,damage};
       this.runEffects(c,'ON_HIT',attacker,target,extra);
+      this.passive(attacker,'ON_HIT',target,extra);
       for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_HIT_TAKEN',target,attacker,extra);
       if(hpDamage>0){
         this.emit('HP_DAMAGED',{targetId:target.id,amount:hpDamage});
@@ -402,6 +515,13 @@ declare const module: any;
         this.emit('COUNTER_TRIGGERED',{ownerId:target.id,attackerId:attacker.id});
         this.dealAttack(target,attacker,counter.card,{isCounter:true});
       }
+    }
+    finishConsumed(slot:any) {
+      const hero=this.getUnit(slot.ownerId),c=slot._executingCard;
+      if(!hero||!c)return;
+      const idx=hero.hand.findIndex(x=>x.uid===c.uid);
+      if(idx>=0){hero.hand.splice(idx,1);hero.discard.push(c);}
+      delete slot._executingCard;
     }
     resolveLinked(allySlot,intent){
       const hero=this.getUnit(allySlot.ownerId),c=this.cardForSlot(allySlot),boss=this.boss;
@@ -422,16 +542,19 @@ declare const module: any;
         if(a>b){
           this.note('합 승리! 보스의 공격 취소');
           this.runEffects(c,'ON_CLASH_WIN',hero,boss);
+          this.passive(hero,'ON_CLASH_WIN',boss);
           this.runEffects(intent.card,'ON_CLASH_LOSE',boss,hero);
           this.dealAttack(hero,boss,c);
         }else if(a<b){
           this.note('합 패배! 아군의 공격 취소');
           this.runEffects(c,'ON_CLASH_LOSE',hero,boss);
+          this.passive(hero,'ON_CLASH_LOSE',boss);
           this.runEffects(intent.card,'ON_CLASH_WIN',boss,hero);
           this.dealAttack(boss,hero,intent.card);
         }else{
           this.note('합 무승부! 양쪽 공격 모두 취소');
           this.runEffects(c,'ON_CLASH_DRAW',hero,boss);
+          this.passive(hero,'ON_CLASH_DRAW',boss);
           this.runEffects(intent.card,'ON_CLASH_DRAW',boss,hero);
         }
       } else {
@@ -470,13 +593,18 @@ declare const module: any;
       events.sort((a,b)=>b.speed-a.speed||a.tie-b.tie);
       for(const event of events){
         if(this.boss.hp<=0||!this.allies.some(a=>a.hp>0))break;
-        if(event.kind==='LINKED')this.resolveLinked(event.pair,event.intent);
+        if(event.kind==='LINKED'){
+          if(this.consumeAction(event.pair)){this.resolveLinked(event.pair,event.intent);this.finishConsumed(event.pair);}
+          else this.resolveBoss(event.intent);
+        }
         if(event.kind==='BOSS')this.resolveBoss(event.intent);
-        if(event.kind==='ALLY')this.resolveAlly(event.slot);
+        if(event.kind==='ALLY'){
+          if(this.consumeAction(event.slot)){this.resolveAlly(event.slot);this.finishConsumed(event.slot);}
+        }
       }
       for(const unit of this.allies){
-        // Used and unused cards are discarded after each turn, fixed deck unchanged.
-        unit.discard.push(...unit.hand);unit.hand=[];
+        // Unused cards stay in hand; only cards actually used move to discard.
+        unit.lastTurnUsed=unit.usedThisTurn;
         unit.slots=[];
       }
       this.endTurn();
@@ -488,6 +616,7 @@ declare const module: any;
       this.note('──── 턴 종료: 키워드 정리 ────');
       this.emit('TURN_END',{turn:this.turn});
       this.runLifecycleEffects('ON_TURN_END');
+      for(const unit of this.allies)this.passive(unit,'ON_TURN_END');
       for(const unit of [...this.allies,this.boss]){
         for(const [id,k] of Object.entries(unit.keywords)){
           if(k.count===null || k.count===undefined){delete unit.keywords[id];continue;}
@@ -502,7 +631,7 @@ declare const module: any;
   // Lightweight data validation before adding authored cards to fixed decks.
   const CARD_TYPES=new Set(Object.keys(T));
   const TRIGGERS=new Set(['ON_BATTLE_START','ON_TURN_START','ON_TURN_END','ON_USE','ON_CLASH_START','ON_CLASH_WIN','ON_CLASH_LOSE','ON_CLASH_DRAW','BEFORE_ATTACK','BEFORE_DAMAGE','ON_HIT','AFTER_DAMAGE','ON_ATTACKED','ON_HIT_TAKEN','ON_DAMAGED','ON_EVADE_SUCCESS','ON_EVADE_FAIL','ON_KILL']);
-  const ACTIONS=new Set(['APPLY_KEYWORD','MODIFY_KEYWORD','REMOVE_KEYWORD','HEAL','DRAW_CARDS','DEAL_DAMAGE']);
+  const ACTIONS=new Set(['APPLY_KEYWORD','MODIFY_KEYWORD','REMOVE_KEYWORD','HEAL','DRAW_CARDS','DEAL_DAMAGE','RESTORE_MANA']);
   const TARGETS=new Set(['SELF','TARGET','ATTACKER','ALL_ALLIES','ALL_ENEMIES']);
   function validateCard(c){
     const errors=[];
@@ -510,6 +639,7 @@ declare const module: any;
     if(typeof c.id!=='string'||!c.id)errors.push('id가 필요합니다.');
     if(!CARD_TYPES.has(c.type))errors.push(`알 수 없는 타입: ${c.type}`);
     if(!Number.isFinite(c.power)||c.power<0)errors.push('power는 0 이상의 유한 숫자여야 합니다.');
+    if(c.manaCost!==undefined && (!Number.isInteger(c.manaCost)||c.manaCost<0))errors.push('manaCost는 0 이상의 정수여야 합니다.');
     if(!Array.isArray(c.effects))errors.push('effects는 배열이어야 합니다.');
     else c.effects.forEach((e,i)=>{
       if(!TRIGGERS.has(e.trigger))errors.push(`effects[${i}] 잘못된 trigger: ${e.trigger}`);
@@ -522,12 +652,12 @@ declare const module: any;
         const target=a.target??e.target??'SELF';
         if(!TARGETS.has(target))errors.push(`effects[${i}].actions[${j}] 알 수 없는 target: ${target}`);
         if(['APPLY_KEYWORD','MODIFY_KEYWORD','REMOVE_KEYWORD'].includes(a.action)&&typeof (a.keyword??e.keyword)!=='string')errors.push(`effects[${i}].actions[${j}] keyword 필요`);
-        if(['DEAL_DAMAGE','HEAL','DRAW_CARDS'].includes(a.action)&&(!Number.isFinite(a.value??e.value)||(a.value??e.value)<0))errors.push(`effects[${i}].actions[${j}] value는 0 이상의 숫자여야 함`);
+        if(['DEAL_DAMAGE','HEAL','DRAW_CARDS','RESTORE_MANA'].includes(a.action)&&(!Number.isFinite(a.value??e.value)||(a.value??e.value)<0))errors.push(`effects[${i}].actions[${j}] value는 0 이상의 숫자여야 함`);
       });
     });
     return errors;
   }
-  const api={RaidBattle,HEROES,K,T,validateCard,boundedKeyword};
+  const api={RaidBattle,HEROES,PASSIVES,K,T,validateCard,boundedKeyword};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RaidEngine=api;
 })(typeof window!=='undefined'?window:globalThis);

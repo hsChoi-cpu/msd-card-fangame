@@ -219,4 +219,117 @@ test('신속 예약·활성 위력과 횟수 99 제한',()=>{const g=make(),u=g.
 test('키워드 직접 조정은 99로 제한',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_UP',{potency:20,count:10});g.modifyKeyword(u,'ATTACK_UP',{potency:999,count:999});assert.deepEqual(u.keywords.ATTACK_UP,{potency:99,count:99});});
 test('과도한 속박에도 속도 최솟값은 1',()=>{const g=make(),u=g.allies[0];g.apply(u,'BIND',{potency:99});g.activatePending(u);assert.equal(g.speedFor(u),1);});
 test('과도한 위력 감소에도 카드 최종 위력 0',()=>{const g=make(),u=g.allies[0];g.apply(u,'ATTACK_DOWN',{potency:99});assert.equal(g.finalPower(u,c('weak','ATTACK',5)),0);});
+// V5 roster, deck, mana, hand retention and passive regression tests.
+const {HEROES}=require('./dist/engine.js');
+test('V5 모든 캐릭터 덱은 10장, 6종 카드',()=>{
+  assert.equal(HEROES.length,6);
+  for(const hero of HEROES){
+    assert.equal(hero.deck.length,10,hero.id);
+    assert.equal(new Set(hero.deck.map(c=>c.id)).size,6,hero.id);
+    assert.ok(hero.deck.every(c=>Number.isInteger(c.manaCost)&&c.manaCost>=0));
+  }
+});
+test('V5 출전 1~6명 슬롯 배분과 첫 턴 슬롯+2 드로우',()=>{
+  for(let n=1;n<=6;n++){
+    const g=new RaidBattle(()=>.4,{partyIds:HEROES.slice(0,n).map(h=>h.id)});
+    const expected=Array.from({length:n},(_,i)=>Math.floor(6/n)+(i<6%n?1:0));
+    assert.deepEqual(g.allies.map(h=>h.slots.length),expected);
+    assert.deepEqual(g.allies.map(h=>h.hand.length),expected.map(x=>x+2));
+    assert.equal(g.allies.reduce((sum,h)=>sum+h.slots.length,0),6);
+  }
+});
+test('V5 4명 출전 시 2/2/1/1 슬롯',()=>{
+  const g=new RaidBattle(()=>.4,{partyIds:HEROES.slice(0,4).map(h=>h.id)});
+  assert.deepEqual(g.allies.map(h=>h.slots.length),[2,2,1,1]);
+});
+test('V5 잘못된 편성(중복, 초과, 미등록)을 거부',()=>{
+  assert.throws(()=>new RaidBattle(()=>.4,{partyIds:['knight','knight']}));
+  assert.throws(()=>new RaidBattle(()=>.4,{partyIds:['unknown']}));
+  assert.throws(()=>new RaidBattle(()=>.4,{partyIds:[]}));
+  assert.throws(()=>new RaidBattle(()=>.4,{maxPartySize:2,partyIds:['knight','rogue','mage']}));
+});
+test('V5 첫 턴 미사용 손패는 다음 턴 이월, 사용 0이면 추가 드로우 0',()=>{
+  const g=make(),before=g.allies[0].hand.map(c=>c.uid);
+  g.resolveTurn();g.nextTurn();
+  assert.deepEqual(g.allies[0].hand.map(c=>c.uid),before);
+  assert.equal(g.allies[0].lastTurnUsed,0);
+});
+test('V5 실제 사용한 카드만 버림으로, 다음 턴 사용 수만큼 드로우',()=>{
+  const g=make(),a=g.allies[0];
+  const first=a.hand.map(c=>c.uid),card=a.hand[0];
+  assert.equal(g.assignCard(a.slots[0].id,card.uid).ok,true);
+  g.resolveTurn();
+  assert.equal(a.lastTurnUsed,1);
+  assert.equal(a.discard.some(c=>c.uid===card.uid),true);
+  assert.deepEqual(a.hand.map(c=>c.uid),first.filter(uid=>uid!==card.uid));
+  g.nextTurn();
+  assert.equal(a.hand.length,first.length);
+});
+test('V5 카드 드로우 중 덱이 바닥나면 버림 더미 재셔플',()=>{
+  const g=make(),a=g.allies[0];
+  a.hand=[];
+  a.deck=[];
+  a.discard=[{...c('a','ATTACK',1),uid:'a'},{...c('b','ATTACK',2),uid:'b'}];
+  g.draw(a,2);
+  assert.deepEqual(new Set(a.hand.map(x=>x.uid)),new Set(['a','b']));
+  assert.equal(a.deck.length,0);assert.equal(a.discard.length,0);
+});
+test('V5 카드 예약 비용 합계 초과 시 배치 거부',()=>{
+  const g=make(),a=g.allies[0];
+  a.mana=2;
+  a.hand[0].manaCost=2;a.hand[1].manaCost=2;
+  assert.equal(g.assignCard(a.slots[0].id,a.hand[0].uid).ok,true);
+  assert.equal(g.assignCard(a.slots[1].id,a.hand[1].uid).ok,false);
+  assert.equal(a.slots[1].cardUid,null);
+});
+test('V5 같은 카드를 다른 슬롯으로 이동하면 비용 중복 예약하지 않음',()=>{
+  const g=make(),a=g.allies[0];a.mana=2;a.hand[0].manaCost=2;
+  assert.equal(g.assignCard(a.slots[0].id,a.hand[0].uid).ok,true);
+  assert.equal(g.assignCard(a.slots[1].id,a.hand[0].uid).ok,true);
+  assert.equal(g.totalPlannedMana(a),2);
+  assert.equal(a.slots[0].cardUid,null);
+});
+test('V5 실행 시 마력 소비하고, 다음 턴 자연 회복',()=>{
+  const g=make(),a=g.allies[0];
+  const chosen=a.hand[0];chosen.manaCost=2;
+  assert.equal(g.assignCard(a.slots[0].id,chosen.uid).ok,true);
+  g.resolveTurn();assert.equal(a.mana,a.maxMana-2);
+  g.nextTurn();assert.equal(a.mana,a.maxMana);
+});
+test('V5 마력 회복 카드 효과는 최대 마력을 초과하지 않음',()=>{
+  const g=make(),a=g.allies[0];a.mana=1;
+  const healing=c('mana','ATTACK',3,[fx('ON_USE','RESTORE_MANA',{value:999})]);
+  g.activate(healing,a,g.boss);
+  assert.equal(a.mana,a.maxMana);
+  assert.ok(g.events.some(e=>e.type==='MANA_RESTORED'));
+});
+test('V5 패시브는 캐릭터 별도 보유 및 이벤트로 발동',()=>{
+  const g=make(),mage=g.allies.find(u=>u.id==='mage');
+  assert.ok(mage.passive?.name);
+  mage.mana=3;
+  g.passive(mage,'ON_CLASH_WIN',g.boss);
+  assert.equal(mage.mana,4);
+});
+test('V5 패시브와 카드 데이터 모두 선언적으로 유효',()=>{
+  const {validateCard,PASSIVES}=require('./dist/engine.js');
+  for(const hero of HEROES){
+    for(const card of hero.deck)assert.deepEqual(validateCard(card),[],hero.id+':'+card.id);
+    assert.deepEqual(validateCard(PASSIVES[hero.id]),[],hero.id+' passive');
+  }
+});
+test('V5 캐릭터별 자연 회복 + 고유 패시브 회복',()=>{
+  const g=new RaidBattle(()=>.4,{partyIds:['scholar']});
+  const a=g.allies[0];a.mana=1;
+  g.resolveTurn();g.nextTurn();
+  assert.equal(a.mana,1+a.manaRegen+1);
+});
+test('V5 카드는 비용만큼 마력을 지불한 경우에만 사용 기록',()=>{
+  const g=make(),a=g.allies[0],slot=a.slots[0],chosen=a.hand[0];
+  chosen.manaCost=3;
+  g.assignCard(slot.id,chosen.uid);
+  a.mana=0; // 타 효과로 마력이 소진된 상황을 가정
+  g.resolveTurn();
+  assert.equal(a.lastTurnUsed,0);
+  assert.ok(a.hand.some(c=>c.uid===chosen.uid));
+});
 console.log(`PASS ${tests.length} tests\n`+tests.map(t=>'✓ '+t).join('\n'));

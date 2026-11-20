@@ -1,72 +1,52 @@
-# 심연 레이드 — TypeScript 전투 엔진 V4
+# 심연 레이드 — TypeScript V5
 
-이 프로젝트는 기존 V3의 전투 행동 및 카드 효과 규칙을 TypeScript로 이전한 버전입니다. **원본 소스는 `src/engine.ts`, `src/ui.ts`, `src/types.ts`이고 브라우저는 TypeScript가 아닌 컴파일된 JavaScript를 실행합니다.**
+싱글플레이 웹 브라우저 턴제 레이드 카드 게임. **V4에서 V5로 업데이트**하면서 캐릭터 편성, 고정 덱, 손패 이월, 마력, 패시브를 추가했습니다. 게임 화면 및 전투 수치는 테스트용 임시 콘텐츠입니다.
 
-## 설치와 로컬 실행 (Windows / VS Code)
+## 빠른 실행 (Windows 11 / VS Code)
 
-프로젝트 폴더에서:
+Node.js가 설치된 프로젝트 폴더에서:
 
 ```powershell
 npm install
 npm test
+npm run build
 ```
 
-- `npm run build`: TypeScript를 `dist/engine.js`, `dist/ui.js`로 컴파일하고 HTML/CSS 복사
-- `npm run typecheck`: TypeScript 타입 검사만 수행
-- `npm test`: 빌드하고 자동 테스트 실행
-- `dist/index.html`: 완성된 로컬 브라우저 진입점. `index.html` 원본을 열지 말고 `dist/index.html`을 여세요.
-- 수정 후 항상 `npm run build`를 실행해 `dist`에 반영하세요.
-- Node.js 24 권장. 프로젝트에는 `typescript` 패키지가 개발 의존성으로 포함되어 있습니다.
+`dist/index.html`을 Chrome/Edge에서 열거나, 정적 서버(예: `npx serve dist`)로 `dist` 폴더를 서비스하세요. **루트의 `index.html`은 빌드 전용 원본이며, 빌드하지 않은 상태로 직접 열면 동작하지 않습니다.**
 
-## GitHub Pages 설정 (중요)
+TypeScript 원본: `src/engine.ts` (전투 로직), `src/types.ts` (공통 타입), `src/ui.ts` (브라우저 UI). `dist/`는 빌드 생성물이며 Git에 올리지 않습니다.
 
-1. 기존 저장소(`hsChoi-cpu/msd-card-fangame`)의 루트에 **ZIP 안의 파일과 숨김 폴더 `.github`까지** 복사합니다.
-2. 기존 `engine.js`, `ui.js`는 원본 소스로 더 이상 사용하지 않습니다. 루트에 남아 있다면 삭제하거나 Git에서 제거합니다. `src/*.ts`가 새 원본입니다.
-3. 저장소에서 **Settings → Pages → Build and deployment → Source: GitHub Actions**를 선택합니다. 이전 `Deploy from a branch` 설정을 반드시 변경하세요. 커스텀 workflow를 사용하지 않으면 원본 `.ts`를 자동으로 빌드하지 않습니다.
-4. `git add -A && git commit -m "Migrate engine to TypeScript v4" && git push origin main`
-5. **Actions → Build and deploy TypeScript game** 에서 빌드/테스트/배포 2개 작업이 모두 성공했는지 확인합니다.
-6. 배포된 사이트: `https://hschoi-cpu.github.io/msd-card-fangame/`
+## V5 규칙
 
-이 Workflow는 `actions/checkout@v6`, `actions/setup-node@v6`, `actions/configure-pages@v6`, `actions/upload-pages-artifact@v5`, `actions/deploy-pages@v5` 를 사용합니다. GitHub Pages의 기본 `pages build and deployment`에서 보여준 `actions/upload-artifact@v4` 경고는 GitHub에서 자동 생성한 기존 배포 작업의 경고일 수 있습니다. 새 Workflow로 이전해도 과거 실행 기록은 남습니다. 과거 실행의 실제 실패 원인은 별도의 실패 단계 로그에서 확인해야 합니다.
+- 최대 출전 인원 6명인 전투. 실제 출전 인원 1~6명을 편성할 수 있습니다. 기본 편성은 기사, 검객, 마법사 3명입니다.
+- 전체 행동 슬롯 예산은 최대 출전 인원(6)과 같습니다. `floor(6 / 출전 인원)`개씩 먼저 지급하고, 나머지는 **편성 순서**가 빠른 캐릭터부터 1개씩 배분합니다. 예: 3명 → 2/2/2, 4명 → 2/2/1/1, 5명 → 2/1/1/1/1.
+- 캐릭터별 서로 다른 6종 카드 총 10장 고정 덱(4종×2장 + 2종×1장)이며, 동일 카드를 구분할 수 있는 물리 카드 UID를 부여합니다.
+- 첫 턴에는 자신이 가진 행동 슬롯 수 + 2장 드로우. 2턴부터는 **직전 턴에 실제 사용한 카드 수**만큼 드로우합니다. 사용하지 않은 손패는 전부 유지됩니다.
+- 카드를 실제 발동했을 때에만 손패에서 버린 카드 더미로 이동합니다. 덱이 비면 버린 카드 더미를 섞어 다시 드로우합니다. 손패는 재셔플 대상이 아닙니다.
+- 캐릭터마다 `maxMana`, `mana`, `manaRegen`이 있습니다. 전투 시작 때 마력은 가득 차며, 2턴부터 턴 시작마다 `manaRegen`만큼 회복합니다(상한은 `maxMana`). 남은 마력은 이월합니다.
+- 카드의 `manaCost`를 행동 지정 단계에서 총합 예약 검사하고, **실제 사용 시** 마력을 소비합니다. 실행 직전 마력이 부족하면 사용하지 않은 것으로 처리하고 해당 카드는 손패에 남습니다. 직접 연결했던 보스 공격은 정상적으로 실행됩니다.
+- 각 캐릭터는 고유한 `passive`를 갖습니다. `ON_USE`, `ON_CLASH_WIN`, `ON_EVADE_SUCCESS`, 턴 시작/종료 등 기존 이벤트 체계를 재사용합니다. 캐릭터·카드·패시브 능력치는 **데모 데이터**이므로 후속 개발 시 교체할 수 있습니다.
+- 카드/패시브 효과 명령 `RESTORE_MANA` 추가. 기존 `APPLY_KEYWORD`, `MODIFY_KEYWORD`, `REMOVE_KEYWORD`, `HEAL`, `DRAW_CARDS`, `DEAL_DAMAGE` 유지.
+- 기존 규칙: 슬롯별 무작위 속도(최소 1), 자기 대상 대응/빠른 속도 가로채기, 합 승리 시 상대 공격 취소 및 동률 쌍방 취소, 합 후 피해 직전 공격 위력 재계산(최소 0), 방어막/회피/반격 지속 규칙, 보호·취약 각 10% 합산, 키워드 위력·횟수 상한 99, 최초 부여 생략값만 1 보정, 신속·속박 다음 턴 예약.
 
-## 확정 전투 규칙
+## GitHub Pages 적용
 
-- 캐릭터별 고정 덱, 싱글플레이, 보스 행동 예고 후 카드 배치
-- 행동 슬롯별 매 턴 무작위 속도, **최종 속도 최소 1**
-- 다른 아군의 공격을 가로채려면 아군 행동 속도가 보스 슬롯 속도보다 엄격하게 높아야 함
-- 공격 합: 높은 위력 승리, 낮은 위력 취소, 동률 시 쌍방 취소
-- 공격/방어/회피/반격/특수 타입; 특수 타입의 개별 효과는 추후 정의
-- **카드 최종 위력 최소 0**, 사용 시 효과 적용 후 합 위력 계산, 피해 직전 위력 다시 계산
-- 공격 위력은 기본 피해량. 보호·취약 각각 1당 받는 피해 ±10%, 합산 적용
-- 방어는 방어막 획득, 잔여 방어막은 턴 종료까지 유지
-- 회피 카드가 빠른 적 공격과 연결되면 **그 적의 실행 시점**에 회피 활성화. 이후 자신에게 향한 공격에 자동 회피, 한 번 실패하면 회피 상태 즉시 소멸. 회피 재부여 시 높은 수치 유지.
-- 반격은 피격 후 공격자에게 턴당 1회 발동. 방어막으로 전부 막아도 피격으로 처리하고 반격 가능.
-- **모든 키워드 위력과 횟수는 각각 최대 99** (0~99 제한; 0 제거 규칙은 키워드 유형에 따름)
-- 일반 키워드는 위력/횟수 합산. **최초 획득 시** 생략된 수치만 1로 보충, 기존 키워드에 재부여할 때 생략 필드는 변화 없음.
-- 횟수가 있는 키워드는 턴 종료마다 횟수 -1, 횟수 없는 키워드는 턴 종료 시 소멸.
-- 신속·속박은 다음 턴 시작에 부여하고 그 턴의 슬롯 속도 계산에 반영
-- 적중 시 취약 부여는 **해당 공격의 피해 처리 이후**이므로 다음 공격부터 적용
+기존 저장소 최상위에 이 ZIP 안의 **전체 파일 및 숨김 폴더 `.github`** 를 복사하세요. V4의 루트 `engine.js`, `ui.js`가 남아 있다면 삭제해도 됩니다(컴파일된 결과물은 `dist/`에 생성됨).
 
-## 현재 카드 효과 시스템
-
-6개 액션 명령: `APPLY_KEYWORD`, `MODIFY_KEYWORD`, `REMOVE_KEYWORD`, `HEAL`, `DRAW_CARDS`, `DEAL_DAMAGE`.
-
-18개 트리거: `ON_BATTLE_START`, `ON_TURN_START`, `ON_TURN_END`, `ON_USE`, `ON_CLASH_START`, `ON_CLASH_WIN`, `ON_CLASH_LOSE`, `ON_CLASH_DRAW`, `BEFORE_ATTACK`, `BEFORE_DAMAGE`, `ON_HIT`, `AFTER_DAMAGE`, `ON_ATTACKED`, `ON_HIT_TAKEN`, `ON_DAMAGED`, `ON_EVADE_SUCCESS`, `ON_EVADE_FAIL`, `ON_KILL`.
-
-10개 조건과 5개 대상 범위가 지원됩니다. 복합 액션, 우선순위, 명시적 `scope:'OWNED'` 지속 효과가 기존과 동일하게 동작합니다.
-
-## 주요 파일
-
-```text
-src/engine.ts             전투 엔진 TypeScript (V3 코드 이식 및 경계값 보정)
-src/ui.ts                 브라우저 화면 TypeScript
-src/types.ts              카드·키워드·이벤트 공통 모델
-index.html                웹 페이지 원본
-styles.css                화면 CSS
-scripts/copy-static.mjs   HTML/CSS를 dist에 복사
-.github/workflows/pages.yml  TypeScript 컴파일 + 테스트 + Pages 배포
-tests.js                  51개 회귀 및 경계값 자동 테스트
-package.json, tsconfig.json
+```powershell
+npm install
+npm test
+npm run build
+git add -A
+git commit -m "Add V5 fixed decks mana and passives"
+git push origin main
 ```
 
-**주의:** 이 버전은 전체 코드를 TypeScript로 컴파일 가능하게 이식한 1차 전환본입니다. 일부 복합 런타임 효과 처리에는 점진적으로 좁힐 수 있는 유연한 타입이 남아 있습니다. 실 브라우저 수동 플레이와 GitHub 서버에서의 실제 배포는 로컬 테스트와 별개로 확인하세요.
+GitHub 저장소의 **Settings → Pages → Source** 를 **GitHub Actions**로 선택하세요. `.github/workflows/pages.yml`은 Node.js 24에서 `npm install` → `npm test`(빌드 포함) → `dist` 게시를 수행합니다.
+
+## 검증
+
+- `npm test`: 기존 V4 회귀 테스트 51개 + 신규 V5 테스트 15개 = **66개**.
+- 타입 검사: `npm run typecheck`.
+- 프로젝트를 원래 GitHub Pages 경로에 배포하는 것은 별도 사용자 작업입니다. 이 패키지만으로 실제 원격 배포 성공을 보장하지 않습니다.
+- 카드 효과의 고급 동시 트리거 및 시각 효과는 향후 개발 과제입니다. 특수 카드 타입은 아직 정하지 않았습니다.
