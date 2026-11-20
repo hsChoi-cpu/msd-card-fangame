@@ -311,10 +311,27 @@ test('V5 패시브는 캐릭터 별도 보유 및 이벤트로 발동',()=>{
   assert.equal(mage.mana,4);
 });
 test('V5 패시브와 카드 데이터 모두 선언적으로 유효',()=>{
-  const {validateCard,PASSIVES}=require('./.test-dist/engine.js');
+  const {validateCard,PASSIVES,passiveList}=require('./.test-dist/engine.js');
   for(const hero of HEROES){
     for(const card of hero.deck)assert.deepEqual(validateCard(card),[],hero.id+':'+card.id);
-    assert.deepEqual(validateCard(PASSIVES[hero.id]),[],hero.id+' passive');
+    for(const passive of passiveList(PASSIVES[hero.id])){
+      assert.deepEqual(validateCard(passive),[],hero.id+' passive');
+    }
+  }
+});
+test('V6.3 패시브 배열의 효과가 전투에서 등록 순서대로 각각 한 번씩 발동',()=>{
+  const {PASSIVES}=require('./.test-dist/engine.js');
+  const original=PASSIVES.mage;
+  try {
+    PASSIVES.mage=[original,c('second-passive','SPECIAL',0,[fx('ON_CLASH_WIN','RESTORE_MANA',{value:2})])];
+    const g=make(),mage=g.allies.find(unit=>unit.id==='mage');
+    assert.notEqual(mage.passives[0],original);
+    mage.mana=1;
+    g.passive(mage,'ON_CLASH_WIN',g.boss);
+    assert.equal(mage.mana,4);
+    assert.deepEqual(g.events.filter(event=>event.type==='MANA_RESTORED').map(event=>event.amount),[1,2]);
+  } finally {
+    PASSIVES.mage=original;
   }
 });
 test('V5 캐릭터별 자연 회복 + 고유 패시브 회복',()=>{

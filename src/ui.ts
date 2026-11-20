@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const { RaidBattle, HEROES, K, T, sortSlotsBySpeed } = (window as any).RaidEngine;
+  const { RaidBattle, HEROES, PASSIVES, BOSS_MOVES, K, T, passiveList, sortSlotsBySpeed } = (window as any).RaidEngine;
   let partyIds: string[] = ['knight', 'rogue', 'mage'];
   let game: any = null;
   let selectedSlotId: string | null = null;
@@ -116,16 +116,157 @@
   const abilityKeywords=(hero:any):string[]=> {
     if(!hero?.deck)return [];
     const keys=new Set<string>();
-    for(const card of [...hero.deck,...(hero.passive?[hero.passive]:[])])for(const effect of card.effects||[])if(effect.keyword)keys.add(effect.keyword);
+    for(const card of [...hero.deck,...passiveList(PASSIVES[hero.id])]){
+      for(const effect of card.effects||[]){
+        if(effect.keyword)keys.add(effect.keyword);
+        for(const action of effect.actions??[])if(action.keyword)keys.add(action.keyword);
+      }
+    }
     return [...keys];
   };
+  function unitImage(path:unknown):string {
+    if(typeof path!=='string')return '';
+    const value=path.trim();
+    return value && !value.startsWith('/') && !value.includes('..') && /^[\w\u3131-\uD7A3/ .-]+$/.test(value) ? value : '';
+  }
+  function spriteMarkup(unit:Combatant):string {
+    const path=unitImage(unit.sprite)||unitImage(unit.portrait);
+    return path
+      ? `<img class="unit-sprite-image" src="${esc(path)}" alt="" draggable="false"/>`
+      : `<span class="hero-body-symbol" aria-hidden="true">${esc(unit.symbol||'◈')}</span><strong>${esc(unit.name)}</strong>`;
+  }
+  function passiveDescriptions(definition?:CardDefinition|CardDefinition[]):string {
+    const cards:CardDefinition[]=passiveList(definition);
+    return cards.length
+      ? cards.map(card=>`<div class="passive-entry"><strong>${esc(card.name)}</strong><p>${esc(card.description||'효과 설명 없음')}</p></div>`).join('')
+      : '<p>등록된 패시브가 없습니다.</p>';
+  }
   // Optional roster portrait: the actual artwork is supplied later.
   // For a playable hero, set hero.portrait = "assets/characters/example.png".
   function portraitMarkup(hero:any, fallback:string):string{
-    const path=typeof hero?.portrait==='string'?hero.portrait.trim():'';
-    if(path && !/^(?:[a-z]+:|\/\/)/i.test(path) && !path.includes('..') && /^[\w\u3131-\uD7A3/ .-]+$/.test(path))
+    const path=unitImage(hero?.portrait);
+    if(path)
       return `<img class="character-portrait-img" src="${esc(path)}" alt="${esc(hero.name)}" loading="lazy"/>`;
     return `<span class="portrait-symbol">${fallback}</span><span class="collection-art-hint">이미지 준비 중</span>`;
+  }
+  const unitDialog=document.getElementById('battleUnitDetail') as HTMLDialogElement;
+  const reportBody=$('unitReportBody');
+  let inspectedUnit:Combatant|null=null;
+  let inspectionOrigin:HTMLButtonElement|null=null;
+
+  function inspectionCards(unit:Combatant):CardDefinition[] {
+    return unit.id==='boss' ? BOSS_MOVES : [...(unit.deck??[]), ...(unit.hand??[]), ...(unit.discard??[])];
+  }
+  function cardTypeLabel(card:CardDefinition):string {
+    return `${esc(T[card.type]||card.type)}${card.type==='MULTI_ATTACK'?` · ${card.hitCount}타`:''}`;
+  }
+  function showReportCard(button:HTMLButtonElement):void {
+    if(!inspectedUnit)return;
+    const card=inspectionCards(inspectedUnit)[Number(button.dataset.reportCard)];
+    const detail=$('unitReportCardEffect');
+    if(!card||!detail)return;
+    const active=reportBody.querySelector('[aria-pressed="true"]');
+    if(active===button)return;
+    active?.setAttribute('aria-pressed','false');
+    button.setAttribute('aria-pressed','true');
+    const cost=inspectedUnit.id==='boss'?'':` · 마력 ${game.manaCost(inspectedUnit,card)}`;
+    detail.innerHTML=`<h3>${esc(card.name)}</h3><small>${cardTypeLabel(card)} · 위력 ${game.finalPower(inspectedUnit,card)}${cost}</small><p>${esc(card.description||'추가 효과 없음')}</p>`;
+  }
+  function renderUnitReportTab(tab:string):void {
+    if(!inspectedUnit)return;
+    unitDialog.querySelectorAll<HTMLButtonElement>('[data-report-tab]').forEach(button=>{
+      button.setAttribute('aria-pressed',String(button.dataset.reportTab===tab));
+    });
+    reportBody.scrollTop=0;
+    if(tab==='passives'){
+      reportBody.innerHTML=`<div class="report-passives">${passiveDescriptions(inspectedUnit.passives??inspectedUnit.passive)}</div>`;
+      return;
+    }
+    const cards=inspectionCards(inspectedUnit);
+    const boss=inspectedUnit.id==='boss';
+    if(!cards.length){
+      reportBody.innerHTML='<p>보유한 카드가 없습니다.</p>';
+      return;
+    }
+    if(tab==='deck'){
+      reportBody.innerHTML=`<div class="report-deck">
+        <div class="report-deck-list" aria-label="${boss?'보스 기술':'보유 카드'}">${cards.map((card,index)=>`
+          <button type="button" class="report-deck-card" data-report-card="${index}" aria-pressed="false">
+            <span class="report-card-art">${cardIllustration(card)}</span><span><strong>${esc(card.name)}</strong><small>${cardTypeLabel(card)}</small></span>
+          </button>`).join('')}</div>
+        <div id="unitReportCardEffect" class="report-card-effect" aria-live="polite"></div>
+      </div>`;
+      showReportCard(reportBody.querySelector<HTMLButtonElement>('[data-report-card]')!);
+      return;
+    }
+    const groups=new Map<string,{card:CardDefinition;count:number}>();
+    for(const card of cards){
+      const group=groups.get(card.id);
+      if(group)group.count++;
+      else groups.set(card.id,{card,count:1});
+    }
+    reportBody.innerHTML=`<div class="report-summary" aria-label="${boss?'보스 기술':'보유 카드 수량'}">${[...groups.values()].map(({card,count})=>`
+      <div class="report-summary-entry"><div class="report-summary-card">
+        <span class="report-card-art">${cardIllustration(card)}</span><strong>${esc(card.name)}</strong>
+      </div>${boss?'':`<span class="report-card-count" aria-label="${count}장">×${count}</span>`}</div>`).join('')}</div>`;
+  }
+  function showUnitDetail(unit:Combatant, origin:HTMLButtonElement):void {
+    if(unitDialog.open)return;
+    const from=origin.getBoundingClientRect();
+    inspectedUnit=unit;
+    inspectionOrigin=origin;
+    unitDialog.classList.toggle('enemy-inspection',unit.id==='boss');
+    $('unitFocusSprite').innerHTML=spriteMarkup(unit);
+    const portrait=unitImage(unit.portrait)||unitImage(unit.sprite);
+    $('unitReportPortrait').innerHTML=portrait
+      ? `<img class="character-portrait-img" src="${esc(portrait)}" alt=""/>`
+      : `<span>${esc(unit.symbol||'◈')}</span>`;
+    $('unitReportName').textContent=unit.name;
+    const mana=unit.mana===undefined||unit.maxMana===undefined
+      ? '<div class="report-resource"><span>마력</span><span>— / —</span></div>'
+      : `<div class="report-resource report-mana"><span>마력</span><b>${unit.mana} / ${unit.maxMana}</b><meter min="0" max="${unit.maxMana||1}" value="${unit.mana}" aria-label="마력"></meter></div>`;
+    const condition=Object.keys(unit.keywords).length||unit.pending.length||unit.counter?.remaining>0
+      ? `<div class="report-status" aria-label="상태 효과">${statuses(unit)}</div>` : '';
+    $('unitReportVitals').innerHTML=`<div class="report-resource report-hp"><span>체력</span><b>${unit.hp} / ${unit.maxHp}</b><meter min="0" max="${unit.maxHp}" value="${unit.hp}" aria-label="체력"></meter></div>
+      ${mana}
+      <div class="report-regen" title="다음 턴 시작에 적용되는 자연 회복량"><span>턴 종료 후 자연 마력 회복</span><b>${unit.manaRegen===undefined?'—':`+${unit.manaRegen}`}</b></div>
+      ${condition}`;
+    renderUnitReportTab('summary');
+    hideSlotInfo('ally');
+    hideSlotInfo('enemy');
+    unitDialog.showModal();
+    const focusSprite=$('unitFocusSprite');
+    const to=focusSprite.getBoundingClientRect();
+    if(to.width&&to.height&&typeof focusSprite.animate==='function'&&
+      !document.documentElement.classList.contains('reduced-motion')&&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+      focusSprite.animate([
+        {transform:`translate(${from.left-to.left}px, ${from.top-to.top}px) scale(${from.width/to.width}, ${from.height/to.height})`},
+        {transform:'none'}
+      ],{duration:280,easing:'cubic-bezier(.2,.65,.25,1)'});
+    }
+  }
+  unitDialog.addEventListener('click',ev=>{
+    const target=ev.target as HTMLElement;
+    if(!target.closest('.unit-clipboard')||target.closest('#closeUnitDetail')){
+      unitDialog.close();
+      return;
+    }
+    const tab=target.closest<HTMLButtonElement>('[data-report-tab]');
+    if(tab)renderUnitReportTab(tab.dataset.reportTab!);
+    const card=target.closest<HTMLButtonElement>('[data-report-card]');
+    if(card)showReportCard(card);
+  });
+  unitDialog.addEventListener('close',()=>{
+    inspectedUnit=null;
+    inspectionOrigin?.focus();
+    inspectionOrigin=null;
+  });
+  for(const event of ['pointerover','focusin']){
+    reportBody.addEventListener(event,ev=>{
+      const card=(ev.target as HTMLElement).closest<HTMLButtonElement>('[data-report-card]');
+      if(card)showReportCard(card);
+    });
   }
   function renderCollection(){
     const search=($('characterSearch') as HTMLInputElement).value.trim().toLocaleLowerCase();
@@ -144,9 +285,9 @@
     const h=collectionRoster.find((x:any)=>x.id===id);if(!h)return;
     const owned=isOwned(id);const implemented=!!h.deck;
     $('characterDetailTitle').textContent=h.name;
-    const passive=(window as any).RaidEngine.PASSIVES?.[h.id];
+    const passives=PASSIVES[h.id];
     const deck=implemented?h.deck:[];
-    $('characterDetailContent').innerHTML=`<div class="detail-head"><div class="detail-portrait">${portraitMarkup(h,owned?esc(h.symbol):'🔒')}</div><div><span class="pill">${owned?'보유':'미보유'}</span><h3>${esc(h.name)}</h3><p>${esc(h.role)}</p>${implemented?`<div class="detail-stats"><span>체력 <b>${h.maxHp}</b></span><span>속도 <b>${h.speed[0]}~${h.speed[1]}</b></span></div>`:'<p class="muted">해당 캐릭터의 상세 데이터와 덱은 추후 추가될 예정입니다.</p>'}</div></div>${implemented?`<div class="detail-block"><h3>전투 패시브</h3><strong>${esc(passive?.name||'패시브 준비 중')}</strong><p>${esc(passive?.description||'')}</p></div><div class="detail-block"><h3>고정 덱 · ${deck.length}장</h3><div class="detail-deck">${deck.map((c:any)=>`<div class="detail-card"><span>${esc(c.name)}</span><small>${esc(T[c.type]||c.type)} · 위력 ${c.power} · 마력 ${c.manaCost}</small><p>${esc(c.description||'효과 없음')}</p></div>`).join('')}</div></div>`:''}`;
+    $('characterDetailContent').innerHTML=`<div class="detail-head"><div class="detail-portrait">${portraitMarkup(h,owned?esc(h.symbol):'🔒')}</div><div><span class="pill">${owned?'보유':'미보유'}</span><h3>${esc(h.name)}</h3><p>${esc(h.role)}</p>${implemented?`<div class="detail-stats"><span>체력 <b>${h.maxHp}</b></span><span>속도 <b>${h.speed[0]}~${h.speed[1]}</b></span></div>`:'<p class="muted">해당 캐릭터의 상세 데이터와 덱은 추후 추가될 예정입니다.</p>'}</div></div>${implemented?`<div class="detail-block"><h3>전투 패시브</h3>${passiveDescriptions(passives)}</div><div class="detail-block"><h3>고정 덱 · ${deck.length}장</h3><div class="detail-deck">${deck.map((c:any)=>`<div class="detail-card"><span>${esc(c.name)}</span><small>${esc(T[c.type]||c.type)} · 위력 ${c.power} · 마력 ${c.manaCost}</small><p>${esc(c.description||'효과 없음')}</p></div>`).join('')}</div></div>`:''}`;
     $('characterDetailPanel').classList.remove('hidden');
   }
   function renderFormation(){
@@ -164,6 +305,7 @@
     }).join('');
   }
   function showScreen(next:'home'|'collection'|'formation'|'battle'){
+    if(next!=='battle'&&unitDialog.open)unitDialog.close();
     if(next!=='battle'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');}
     screen=next;
     document.body.classList.toggle('battle-active',next==='battle');
@@ -186,27 +328,22 @@
     $('bossHpText').textContent=`${game.boss.hp} / ${game.boss.maxHp}`;
     $('bossHpBar').style.width=`${Math.max(0,100*game.boss.hp/game.boss.maxHp)}%`;
     $('bossStatus').innerHTML=statuses(game.boss);
+    $('bossSprite').innerHTML=spriteMarkup(game.boss);
     const linked=new Map(allSlots().filter((s:any)=>s.targetIntentId).map((s:any)=>[s.targetIntentId,s]));
     // UI-only sort: never mutate intent IDs, linked slot IDs or execution order.
     $('intents').innerHTML=sortSlotsBySpeed(game.boss.intents).map((x:any,i:number)=>{
       const pair:any=linked.get(x.id);
       return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="적 슬롯 ${i+1}: ${esc(x.card.name)}, 속도 ${x.speed}, 위력 ${game.finalPower(game.boss,x.card)}"><span class="action-art">${slotIllustration(x.card,'✦')}</span></div></div>`;
     }).join('');
-    $('heroes').innerHTML=game.allies.map((u:any,position:number)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''} ${u.hp<=0?'fallen':''}">
+    $('heroes').innerHTML=game.allies.map((u:Combatant)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''} ${u.hp<=0?'fallen':''}">
       <div class="hero-slots">${sortSlotsBySpeed(u.slots).map((s:any,i:number)=>{
         const c=game.cardForSlot(s),intent=game.boss.intents.find((it:any)=>it.id===s.targetIntentId);
         return `<div class="ally-action-wrap"><span class="hex-speed ally-hex">${s.speed}</span><button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} aria-label="${esc(u.name)} 슬롯 ${i+1}, 속도 ${s.speed}${c?`, ${esc(c.name)}, 위력 ${game.finalPower(u,c)}`:', 카드 미장착'}${intent?', 합 연결됨':''}" title="${c?'보스 슬롯으로 드래그하여 합 연결':'클릭하여 손패 표시'}"><span class="action-art">${c?slotIllustration(c,'◆'):'<span class="action-art-empty" aria-hidden="true">＋</span>'}</span></button></div>`;
       }).join('')}</div>
-      <div class="hero-body" role="img" aria-label="${esc(u.name)}"><span class="hero-body-symbol">${esc(u.symbol)}</span><strong>${esc(u.name)}</strong><small>${position+1}번 편성</small></div>
-      <div class="hero-health"><div class="hp-track"><div class="hp-fill boss-fill" style="width:${Math.max(0,100*u.hp/u.maxHp)}%"></div></div><span>${u.hp}/${u.maxHp} HP</span></div>
-      <div class="hero-status">${statuses(u)}</div>
+      <button type="button" class="hero-body unit-sprite" data-unit="${esc(u.id)}" aria-haspopup="dialog" aria-label="${esc(u.name)} 전투 정보">${spriteMarkup(u)}</button>
     </article>`).join('');
     const hero=selectedHero();
-    $('manaTitle').textContent=`${hero.symbol} ${hero.name}`;
-    $('manaDisplay').innerHTML=`<div class="mana-large"><span>마력</span><strong>${hero.mana} <small>/ ${hero.maxMana}</small></strong></div><div class="mana-track"><span style="width:${hero.maxMana?Math.max(0,100*hero.mana/hero.maxMana):0}%"></span></div><div class="mana-note">턴당 자연 회복 <b>+${hero.manaRegen}</b><br>장착 카드 비용 <b>${game.totalPlannedMana(hero)}</b></div>`;
-    $('deckMeta').innerHTML=`덱 ${hero.deck.length}장 · 버림 ${hero.discard.length}장 · 소멸 ${hero.exhaust?.length??0}장<br>손패 ${hero.hand.length}장 (턴 종료 상한 7) · 이번 턴 사용 ${hero.usedThisTurn}장`;
-    $('passiveDisplay').innerHTML=`<div class="eyebrow">PASSIVE</div><strong>${esc(hero.passive.name)}</strong><p>${esc(hero.passive.description)}</p>`;
-    $('handTitle').textContent=`${hero.name}의 손패`;
+    $('manaDisplay').innerHTML=`<div class="mana-large"><span>마력</span><strong>${hero.mana} <small>/ ${hero.maxMana}</small></strong></div><div class="mana-track"><span style="width:${hero.maxMana?Math.max(0,100*hero.mana/hero.maxMana):0}%"></span></div>`;
     $('hand').innerHTML=hero.hand.length?hero.hand.map((c:any)=>{
       const used=hero.slots.some((s:any)=>s.cardUid===c.uid);
       return `<button class="hand-card ${used?'assigned':''} card-type-${c.type.toLowerCase()}" data-card="${esc(c.uid)}" ${!planning||hero.hp<=0?'disabled':''} aria-label="${esc(c.name)}, 위력 ${game.finalPower(hero,c)}, 마력 ${game.manaCost(hero,c)}"><div class="card-title">${esc(c.name)}</div><div class="card-power" title="최종 카드 위력">${game.finalPower(hero,c)}</div><div class="card-mana" title="소모 마력">${game.manaCost(hero,c)}</div><div class="card-art">${cardIllustration(c)}</div><div class="card-type-label">${glyph[c.type]} ${esc(T[c.type]||c.type)}${c.type==='MULTI_ATTACK'?` · ${c.hitCount}타`:''}</div><div class="card-effect-text">${esc(c.description||'추가 효과 없음')}</div><div class="card-assignment">${used?'장착됨 · 다른 슬롯으로 이동 가능':c.type==='SPECIAL'?'클릭하면 즉시 사용':'클릭하여 장착'}</div></button>`;
@@ -250,6 +387,12 @@
       if(move){const idx=partyIds.indexOf(move.dataset.move!);const other=idx+(move.dataset.direction==='up'?-1:1);if(idx>=0&&other>=0&&other<partyIds.length){[partyIds[idx],partyIds[other]]=[partyIds[other],partyIds[idx]];renderFormation();}return;}
       const pick=target.closest<HTMLElement>('[data-party]');
       if(pick){const id=pick.dataset.party!;if(partyIds.includes(id)){if(partyIds.length===1)return toast('출전 캐릭터는 최소 1명이 필요합니다.');partyIds=partyIds.filter(x=>x!==id);}else{if(partyIds.length>=6)return toast('최대 6명까지 출전할 수 있습니다.');partyIds.push(id);}renderFormation();return;}
+      return;
+    }
+    const sprite=target.closest<HTMLButtonElement>('.unit-sprite[data-unit]');
+    if(sprite){
+      const unit=game.getUnit(sprite.dataset.unit);
+      if(unit)showUnitDetail(unit,sprite);
       return;
     }
     if(game.status!=='PLANNING')return;

@@ -68,7 +68,7 @@ declare const module: any;
     knight:{max:12,regen:3}, rogue:{max:11,regen:4}, mage:{max:14,regen:4},
     priest:{max:13,regen:4}, ranger:{max:12,regen:3}, scholar:{max:15,regen:5}
   };
-  const PASSIVES: Record<string,CardDefinition> = {
+  const PASSIVES: Record<string,CardDefinition|CardDefinition[]> = {
     knight: card('passive-knight','수호의 맹세','SPECIAL',0,'합 패배 시 마력 1 회복',[
       {trigger:'ON_CLASH_LOSE',action:'RESTORE_MANA',value:1}]),
     rogue: card('passive-rogue','민첩한 발놀림','SPECIAL',0,'회피 성공 시 다음 턴 신속 1 예약',[
@@ -82,6 +82,9 @@ declare const module: any;
     scholar: card('passive-scholar','마력 재활용','SPECIAL',0,'턴 시작 시 추가 마력 1 회복',[
       {trigger:'ON_TURN_START',action:'RESTORE_MANA',value:1}])
   };
+  function passiveList(definition?:CardDefinition|CardDefinition[]):CardDefinition[] {
+    return Array.isArray(definition)?definition:definition?[definition]:[];
+  }
   const BOSS_MOVES: CardDefinition[] = [
     card('b1','심연의 참격','ATTACK',15,'단일 공격'),
     {...card('b2','파쇄 일격','MULTI_ATTACK',19,'3연속 공격'),hitCount:3},
@@ -119,8 +122,11 @@ declare const module: any;
       this.reset();
     }
     passive(owner:Combatant,trigger:EffectTrigger,target:Combatant=owner,extra:any={}) {
-      if(owner?.hp>0 && owner.id!=='boss' && owner.passive) {
-        this.runEffects(owner.passive,trigger,owner,target,extra);
+      if(owner?.hp>0 && owner.id!=='boss') {
+        for(const card of passiveList(owner.passives??owner.passive)) {
+          if(owner.hp<=0)break;
+          this.runEffects(card,trigger,owner,target,extra);
+        }
       }
     }
     restoreMana(unit:Combatant, amount:number):number {
@@ -162,9 +168,13 @@ declare const module: any;
         if(!found)throw new Error(`알 수 없는 캐릭터: ${id}`);
         return found;
       });
-      this.allies=selected.map(h=>({id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,
-        maxMana:MANA[h.id].max,mana:MANA[h.id].max,manaRegen:MANA[h.id].regen,usedThisTurn:0,lastTurnUsed:0,passive:copy(PASSIVES[h.id]),
-        deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],exhaust:[],slots:[]}));
+      this.allies=selected.map(h=>{
+        const defined=PASSIVES[h.id];
+        const passives=defined?Array.isArray(defined)?{passives:copy(defined)}:{passive:copy(defined)}:{};
+        return {id:h.id,name:h.name,role:h.role,symbol:h.symbol,color:h.color,portrait:h.portrait,sprite:h.sprite,hp:h.maxHp,maxHp:h.maxHp,speed:[...h.speed],keywords:{},pending:[],counter:null,evadeSource:null,
+          maxMana:MANA[h.id].max,mana:MANA[h.id].max,manaRegen:MANA[h.id].regen,usedThisTurn:0,lastTurnUsed:0,...passives,
+          deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],exhaust:[],slots:[]};
+      });
       this.boss={id:'boss',name:'심연의 군주',symbol:'👁️',hp:260,maxHp:260,speed:[3,8],keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
       this.note('전투 시작! 각 캐릭터의 고정 덱으로 보스에 대응하세요.');
       for(const unit of this.allies){for(const c of [...unit.deck])this.runEffects(c,'ON_BATTLE_START',unit,unit,{silent:true});this.passive(unit,'ON_BATTLE_START');}
@@ -939,7 +949,7 @@ declare const module: any;
     });
     return errors;
   }
-  const api={RaidBattle,HEROES,PASSIVES,K,T,validateCard,boundedKeyword,sortSlotsBySpeed};
+  const api={RaidBattle,HEROES,PASSIVES,BOSS_MOVES,K,T,passiveList,validateCard,boundedKeyword,sortSlotsBySpeed};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RaidEngine=api;
 })(typeof window!=='undefined'?window:globalThis);
