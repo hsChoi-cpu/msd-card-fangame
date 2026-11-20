@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0c1220" />
   <title>심연 레이드 · 전투 프로토타입</title>
-  <link rel="stylesheet" href="styles.css" />
+
 </head>
 <body>
   <div class="shell">
     <header class="masthead">
-      <div><div class="eyebrow">ABYSS RAID · V5.2 UI PROTOTYPE</div><h1>심연 레이드 <span>TACTICAL CARD RAID</span></h1></div>
+      <div><div class="eyebrow">ABYSS RAID · V5.3 UI PROTOTYPE</div><h1>심연 레이드 <span>TACTICAL CARD RAID</span></h1></div>
       <div class="header-actions"><span id="turnBadge" class="pill hidden">TURN 1</span><button id="backToParty" class="ghost hidden">← 편성 화면</button></div>
     </header>
 
@@ -43,7 +43,10 @@
       <details class="panel combat-report"><summary>전투 기록 확인</summary><div class="report-tools"><button id="copyLog" class="ghost tiny">기록 복사</button></div><div id="combatLog" class="logs" aria-live="polite"></div></details>
     </main>
   </div>
+  <div id="specialTargetPanel" class="special-target-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="specialTargetTitle">
+    <div class="panel special-target-dialog"><h2 id="specialTargetTitle">특수 카드 대상 선택</h2><p class="muted small">대상을 선택하면 마력이 소비되고 효과가 즉시 적용됩니다.</p><div id="specialTargetChoices" class="special-target-choices"></div><button type="button" class="ghost" id="cancelSpecialTarget">취소</button></div>
+  </div>
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
-  <script src="engine.js"></script><script src="ui.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

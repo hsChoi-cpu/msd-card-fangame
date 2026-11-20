@@ -31,7 +31,7 @@ declare const module: any;
       card('r3','기습','ATTACK',11,'합 승리 시 자신에게 신속 2 예약',[eff('ON_CLASH_WIN','HASTE',2)]),
       card('r4','급소 절단','ATTACK',16,'강력한 공격'),
       card('r5','허점 찌르기','ATTACK',9,'적중 시 취약 3',[eff('ON_HIT','VULNERABLE',3,undefined,'TARGET')]),
-      card('r6','교란','ATTACK',10,'적중 시 대상에게 속박 2 예약',[eff('ON_HIT','BIND',2,undefined,'TARGET')]),
+      {...card('r6','교란 봉인','SPECIAL',0,'즉시 사용: 보스에게 다음 턴 속박 2 예약',[eff('ON_USE','BIND',2,undefined,'TARGET')]),specialTarget:'ENEMY',manaCost:1},
       card('r7','반격 자세','COUNTER',13,'피격 시 반격'),
       card('r8','집중 검무','ATTACK',12,'사용 시 공격력 증가 2',[eff('ON_USE','ATTACK_UP',2)])
     ]},
@@ -41,7 +41,7 @@ declare const module: any;
       card('m3','봉인술','ATTACK',10,'적중 시 적 공격력 감소 3 · 횟수 2',[eff('ON_HIT','ATTACK_DOWN',3,2,'TARGET')]),
       card('m4','마력 파장','ATTACK',13,'합 승리 시 대상에게 취약 2 · 횟수 2',[eff('ON_CLASH_WIN','VULNERABLE',2,2,'TARGET')]),
       card('m5','비전 장벽','GUARD',13,'사용 시 자신에게 방어막 부여'),
-      card('m6','예지','EVADE',12,'발동 시 회피 부여'),
+      {...card('m6','마력 공급','SPECIAL',0,'즉시 사용: 선택한 아군의 마력 3 회복',[{trigger:'ON_USE',action:'RESTORE_MANA',value:3,target:'TARGET'}]),specialTarget:'ALLY',manaCost:1},
       card('m7','역류 반격','COUNTER',16,'피격 시 마법 반격'),
       card('m8','쇠약의 파동','ATTACK',11,'적중 시 대상에게 위력 감소 2',[eff('ON_HIT','POWER_DOWN',2,undefined,'TARGET')])
     ]}
@@ -92,6 +92,7 @@ declare const module: any;
   ];
   const clamp = (n: number,min: number,max: number): number => Math.min(max,Math.max(min,n));
   const boundedKeyword = (n: number): number => clamp(Math.trunc(Number.isFinite(n)?n:0),0,99);
+  const sortSlotsBySpeed = <S extends {speed:number}>(slots:S[]):S[] => slots.map((slot,index)=>({slot,index})).sort((a,b)=>b.slot.speed-a.slot.speed || a.index-b.index).map(x=>x.slot);
   class RaidBattle {
     rng: () => number;
     turn!: number;
@@ -217,6 +218,51 @@ declare const module: any;
         unit.hand.push(unit.deck.pop());
       }
     }
+    // Special cards are played directly from the owner's hand during planning.
+    // They consume mana and discard immediately without claiming an action slot.
+    playSpecial(ownerId:string, cardUid:string, targetId?:string) {
+      if(this.status!=='PLANNING')return {ok:false,reason:'행동 지정 단계에서만 사용할 수 있습니다.'};
+      const owner=this.allies.find(u=>u.id===ownerId);
+      if(!owner||owner.hp<=0)return {ok:false,reason:'특수 카드를 사용할 캐릭터가 없습니다.'};
+      const c=owner.hand.find(x=>x.uid===cardUid);
+      if(!c||c.type!=='SPECIAL')return {ok:false,reason:'손패의 특수 카드만 즉시 사용할 수 있습니다.'};
+      const targeting=c.specialTarget??'SELF';
+      const target=targeting==='SELF'?owner:targetId?this.getUnit(targetId):null;
+      if(!target||target.hp<=0)return {ok:false,reason:'유효한 대상이 필요합니다.'};
+      if(targeting==='ALLY' && !this.allies.includes(target))return {ok:false,reason:'아군을 지정해야 합니다.'};
+      if(targeting==='ENEMY' && target!==this.boss)return {ok:false,reason:'적을 지정해야 합니다.'};
+      if(targeting==='ANY' && target!==this.boss && !this.allies.includes(target))return {ok:false,reason:'아군 또는 적을 지정해야 합니다.'};
+      // Never make already-equipped cards unaffordable due to immediate spending.
+      const available=owner.mana-this.totalPlannedMana(owner);
+      const cost=c.manaCost??0;
+      if(cost>available)return {ok:false,reason:`마력이 부족합니다. 사용 가능 ${available} / 소모 ${cost} (예약 마력 제외)`};
+      owner.mana-=cost;
+      owner.usedThisTurn=(owner.usedThisTurn??0)+1;
+      const index=owner.hand.findIndex(x=>x.uid===cardUid);
+      owner.hand.splice(index,1);
+      owner.discard.push(c);
+      this.note(`${owner.name}: 특수 카드 [${c.name}] 즉시 사용 (마력 -${cost})`);
+      this.emit('SPECIAL_PLAYED',{ownerId:owner.id,cardId:c.id,targetId:target.id});
+      // activate invokes ON_USE and owner passive exactly once.
+      this.activate(c,owner,target);
+      if(this.boss.hp<=0){this.status='WON';this.note('🏆 레이드 성공! 심연의 군주를 격파했습니다.');}
+      else if(!this.allies.some(a=>a.hp>0)){this.status='LOST';this.note('☠ 레이드 실패! 모든 아군이 쓰러졌습니다.');}
+      return {ok:true};
+    }
+    // Only physical card copies in hand may be assigned to a slot.
+    discardHandOverflow(unit:Combatant) {
+      if(!unit.hand)return 0;
+      let count=0;
+      while(unit.hand.length>7){
+        const index=this.randint(0,unit.hand.length-1);
+        const [removed]=unit.hand.splice(index,1);
+        unit.discard.push(removed);
+        this.note(`${unit.name}: 손패 7장 초과 → [${removed.name}] 무작위 버림`);
+        this.emit('HAND_OVERFLOW_DISCARDED',{ownerId:unit.id,cardId:removed.id,cardUid:removed.uid});
+        count++;
+      }
+      return count;
+    }
     startTurn(){
       if(this.status==='WON'||this.status==='LOST')return;
       this.turn++;this.effectBudget=0;this.status='PLANNING';this.phase=this.boss.hp<=130?2:1;
@@ -257,6 +303,7 @@ declare const module: any;
       if(!hero||hero.hp<=0)return {ok:false,reason:'선택할 수 없는 슬롯입니다.'};
       const c=hero.hand.find(x=>x.uid===cardUid);
       if(!c)return {ok:false,reason:'해당 카드가 손패에 없습니다.'};
+      if(c.type==='SPECIAL')return {ok:false,reason:'특수 카드는 슬롯에 장착하지 않고 즉시 사용합니다.'};
       const proposed=this.totalPlannedMana(hero,slotId)+(c.manaCost??0);
       // Moving the same physical card from another slot is free of double reservation.
       const previous=hero.slots.find(s=>s.cardUid===cardUid && s.id!==slotId);
@@ -272,6 +319,7 @@ declare const module: any;
       if(this.status!=='PLANNING')return {ok:false,reason:'행동 배치 단계가 아닙니다.'};
       const slot=this.allies.flatMap(u=>u.slots).find(s=>s.id===slotId);
       if(!slot||!slot.cardUid)return {ok:false,reason:'먼저 슬롯에 카드를 배치하세요.'};
+      if(this.cardForSlot(slot)?.type==='SPECIAL')return {ok:false,reason:'특수 카드는 합을 진행하지 않습니다.'};
       const intent=this.boss.intents.find(x=>x.id===intentId);
       if(!intent||intent.card.type!=='ATTACK')return {ok:false,reason:'공격 행동 슬롯만 직접 대응할 수 있습니다.'};
       const existing=this.allies.flatMap(u=>u.slots).find(s=>s.id!==slotId&&s.targetIntentId===intentId&&s.cardUid);
@@ -626,6 +674,8 @@ declare const module: any;
         }
         unit.counter=null;unit.evadeSource=null;
       }
+      // After all end-of-turn effects and keyword cleanup, randomly discard excess hand cards.
+      for(const unit of this.allies)this.discardHandOverflow(unit);
     }
     nextTurn(){if(this.status==='REVIEW')this.startTurn();}
   }
@@ -641,6 +691,7 @@ declare const module: any;
     if(!CARD_TYPES.has(c.type))errors.push(`알 수 없는 타입: ${c.type}`);
     if(!Number.isFinite(c.power)||c.power<0)errors.push('power는 0 이상의 유한 숫자여야 합니다.');
     if(c.manaCost!==undefined && (!Number.isInteger(c.manaCost)||c.manaCost<0))errors.push('manaCost는 0 이상의 정수여야 합니다.');
+    if(c.specialTarget!==undefined && !['SELF','ALLY','ENEMY','ANY'].includes(c.specialTarget))errors.push('specialTarget 값이 올바르지 않습니다.');
     if(!Array.isArray(c.effects))errors.push('effects는 배열이어야 합니다.');
     else c.effects.forEach((e,i)=>{
       if(!TRIGGERS.has(e.trigger))errors.push(`effects[${i}] 잘못된 trigger: ${e.trigger}`);
@@ -658,7 +709,7 @@ declare const module: any;
     });
     return errors;
   }
-  const api={RaidBattle,HEROES,PASSIVES,K,T,validateCard,boundedKeyword};
+  const api={RaidBattle,HEROES,PASSIVES,K,T,validateCard,boundedKeyword,sortSlotsBySpeed};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RaidEngine=api;
 })(typeof window!=='undefined'?window:globalThis);

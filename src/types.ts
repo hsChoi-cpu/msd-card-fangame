@@ -10,7 +10,7 @@ interface KeywordApplication {potency?:number;count?:number}
 interface PendingKeyword extends KeywordInstance {id:KeywordId}
 interface EffectAction {action:EffectCommand;target?:EffectTarget;keyword?:KeywordId;potency?:number;count?:number;value?:number;ignoreMitigation?:boolean;ignoreShield?:boolean}
 interface CardEffect extends Partial<EffectAction> {trigger:EffectTrigger;scope?:'OWNED';priority?:number;conditions?:Array<Record<string,any>>;actions?:EffectAction[]}
-interface CardDefinition {id:string;name:string;type:CardType;power:number;manaCost?:number;description?:string;effects:CardEffect[];uid?:string}
+interface CardDefinition {id:string;name:string;type:CardType;power:number;manaCost?:number;description?:string;effects:CardEffect[];uid?:string;image?:string|null;specialTarget?:'SELF'|'ALLY'|'ENEMY'|'ANY'}
 interface HeroTemplate {id:string;name:string;role:string;symbol:string;maxHp:number;speed:number[];color:string;deck:CardDefinition[]}
 interface BattleEvent {type:string;turn:number;order:number;[key:string]:any}
 // UI and battle logic share the following run-time shape; further refinement is safe as rules stabilize.

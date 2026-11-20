@@ -50,3 +50,12 @@
 .card-type-attack .card-type-label{border-color:#ae6875}.card-type-guard .card-type-label{border-color:#668fc5}.card-type-evade .card-type-label{border-color:#62b99f}.card-type-counter .card-type-label{border-color:#c0a36c}
 .hand-panel .hand-grid{padding:17px 13px 18px;gap:16px;overflow-y:visible}
 @media(max-width:850px){.intent-tooltip{right:auto;left:0;top:auto;bottom:calc(100% + 9px);transform:translateY(5px);width:min(290px,82vw)}.intent:hover .intent-tooltip,.intent:focus-visible .intent-tooltip{transform:translateY(0)}}
+
+/* V5.3: skill targeting and specially playable hand cards */
+.card-type-special .card-type-label{border-color:#c69ce9;color:#f0dbff}
+.hand-card.card-type-special{border-color:#9b7cbf}
+.special-target-overlay{position:fixed;inset:0;z-index:120;background:#050a14d9;display:grid;place-items:center;padding:20px}
+.special-target-overlay.hidden{display:none}
+.special-target-dialog{width:min(450px,100%);box-shadow:0 18px 70px #0009}
+.special-target-choices{display:flex;flex-wrap:wrap;gap:9px;margin:18px 0}
+.special-target-choice{flex:1 1 160px;min-height:44px}
