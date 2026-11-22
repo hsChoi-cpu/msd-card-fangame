@@ -18,16 +18,27 @@
     description:'[적중 시] 출혈 위력 3 · 횟수 2 부여.',
     effects:[{trigger:'ON_HIT',action:'APPLY_KEYWORD',target:'TARGET',keyword:'BLEED',potency:3,count:2}]};
   const mince:CardDefinition = {id:'abaddon-mince',name:'다지기',type:'ATTACK',power:9,
-    description:'[적중 시] 다음 턴 대상에게 취약 1. 출혈 위력 2 · 횟수 1 부여.',
+    description:`[적중 시] 다음 턴 시작 시 대상에게 취약 1 부여.
+[적중 시] 출혈 위력 2 · 횟수 1 부여.`,
     effects:[{trigger:'ON_HIT',action:'APPLY_KEYWORD',target:'TARGET',keyword:'BLEED',potency:2,count:1}]};
   const tear:CardDefinition = {id:'abaddon-tear',name:'뜯어먹기',type:'COUNTER',power:6,
-    description:'[적중 시] 다음 턴 대상에게 취약 1. 출혈 횟수 3 부여. 자신의 체력 1~5 회복.',
+    description:`[적중 시] 다음 턴 시작 시 대상에게 취약 1 부여.
+[적중 시] 출혈 횟수 3 부여.
+[적중 시] 자신의 체력 1~5 회복.`,
     effects:[{trigger:'ON_HIT',action:'APPLY_KEYWORD',target:'TARGET',keyword:'BLEED',count:3}]};
   const eat:CardDefinition = {id:'abaddon-eat',name:'섭취',type:'ATTACK',power:11,
-    description:'포만감이 없으면 위력 +2. [합 승리 시] 상대 카드의 최종 소모 마력만큼 포만감 획득. [적중 시] 출혈 위력 2 · 횟수 2 부여.',
+    description:`포만감이 없으면 이 카드의 위력 +2.
+[합 승리 시] 상대 카드의 최종 소모 마력만큼 포만감 획득.
+[적중 시] 출혈 위력 2 · 횟수 2 부여.`,
     effects:[{trigger:'ON_HIT',action:'APPLY_KEYWORD',target:'TARGET',keyword:'BLEED',potency:2,count:2}]};
   const devour:CardDefinition = {id:'abaddon-devour',name:'포식',type:'ATTACK',power:18,
-    description:'좌절감으로 예약되면 위력 +5. [사용 시] 허기를 최대 4 소모(최소 1). 소모 전 허기 보정을 유지하며 소모한 허기 1당 피해량 +2%. [합 패배 시] 다음 턴 허기 최소 3. 일반 포식은 좌절감 1 획득, 강화 포식은 좌절감 제거 및 다음 턴 취약 3. [합 승리 시] 좌절감이 있으면 모두 제거하고 다음 턴 공격력 증가 1 및 신속 1. [적중 시] 포만감 5(이 공격으로 처치 시 추가 5), 출혈 위력 4 · 횟수 2, 공격력 감소 위력 1 · 횟수 2.',
+    description:`‘좌절감’의 효과로 발동되었다면 이 카드의 위력 +5.
+[사용 시] 자신의 ‘채워지지 않는 허기’를 최대 4 소모. 소모 직전 허기 보정을 유지하며, 소모 수치당 이 카드의 피해량 +2%.
+[합 패배 시] 다음 턴 시작 시 ‘채워지지 않는 허기’를 3까지 얻음. ‘좌절감’ 1을 얻음. ‘좌절감’을 3 보유하고 있다면 대신 ‘좌절감’을 모두 제거하고 다음 턴 시작 시 취약 3을 얻음.
+[합 승리 시] ‘좌절감’이 있으면 전부 제거하고 다음 턴 시작 시 공격력 증가 1과 신속 1을 얻는다.
+[적중 시] ‘포만감’ 5 획득. 이 공격으로 적을 처치했다면 추가로 5 획득.
+[적중 시] 출혈 위력 4 · 횟수 2 부여.
+[적중 시] 공격력 감소 위력 1 · 횟수 2 부여.`,
     effects:[{trigger:'ON_HIT',actions:[
       {action:'APPLY_KEYWORD',target:'TARGET',keyword:'BLEED',potency:4,count:2},
       {action:'APPLY_KEYWORD',target:'TARGET',keyword:'ATTACK_DOWN',potency:1,count:2}
@@ -36,11 +47,19 @@
 
   const [beelzebub, starving, letMeEat]:CardDefinition[] = [
     {id:'abaddon-beelzebub',name:'벨제부브',type:'SPECIAL',power:0,effects:[],
-      description:'전투 시작 및 2턴부터 매 턴 시작 시 허기 1 획득. 턴 종료 시 포만감의 절반(버림)만큼 허기 감소. 감소 후 허기가 5이면 다음 턴 포식 예약.'},
+      description:`전투 시작 시 ‘채워지지 않는 허기’ 1 획득.
+2턴부터 매 턴 시작 시 ‘채워지지 않는 허기’ 1 획득.
+턴 종료 시 ‘포만감’의 절반만큼 ‘채워지지 않는 허기’ 감소.(소수점 버림)
+턴 종료 시 ‘채워지지 않는 허기’가 5이면 다음 턴 강력한 카드를 사용.`},
     {id:'abaddon-starving',name:'배... 고파...',type:'SPECIAL',power:0,effects:[],
-      description:'매 턴 섭취 1장 사용. 섭취 합 승리 시 포만감 획득. 턴 종료 시 포만감만큼 최대 체력의 % 회복. 포식이 예약되면 섭취를 대체.'},
+      description:`매 턴 ‘섭취’ 카드 1장 사용.
+‘섭취’의 합 승리 시 ‘포만감’ 획득.
+턴 종료 시 ‘포만감’ 수치만큼 최대 체력의 %를 회복.
+다음 턴에 강력한 카드를 사용할 예정이라면 ‘섭취’ 대신 강력한 카드를 사용.`},
     {id:'abaddon-let-me-eat',name:'먹게... 해줘...',type:'SPECIAL',power:0,effects:[],
-      description:'포식의 합 패배 시 좌절감 획득. 턴 종료 시 좌절감 3이면 다음 턴 강화 포식. 강화 포식의 합 패배 시 좌절감을 제거하고 다음 턴 취약 3 획득.'}
+      description:`‘포식’의 합 패배 시 ‘좌절감’ 획득.
+턴 종료 시 ‘좌절감’이 3이면 다음 턴에 강화된 강력한 스킬을 사용.
+강화된 강력한 스킬의 합 패배 시 ‘좌절감’을 제거하고 다음 턴 시작 시 취약 3 획득.`}
   ];
 
   interface AbaddonState {

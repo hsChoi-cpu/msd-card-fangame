@@ -40,15 +40,38 @@
   function allSlots(){return game?game.allies.flatMap((u:any)=>u.slots):[];}
   function selectedSlot():any{return allSlots().find((s:any)=>s.id===selectedSlotId)||null;}
   function selectedHero():any{const s=selectedSlot();return s?game.getUnit(s.ownerId):game.allies.find((u:any)=>u.hp>0)||game.allies[0];}
-  function statuses(u:any):string {
-    const items=Object.entries((u as Combatant).keywords).map(([id,v])=>{
+  function statuses(u:Combatant, includePending=true):string {
+    const items=Object.entries(u.keywords).map(([id,v])=>{
       const resource=game.bossResource(u,id);
       const label=id.startsWith('MARK:')?'표식-'+(game.getUnit(v.sourceId)?.name||v.sourceId||'알 수 없음'):(resource?.name??K[id]??id);
       return `<span class="keyword" title="${esc(resource?.tooltip??'키워드 위력과 횟수')}">${esc(label)} ${v.potency}${v.count===null?'':` · ${v.count}회`}</span>`;
     });
-    for(const p of u.pending)items.push(`<span class="keyword pending">${esc(K[p.id]||p.id)} ${p.potency} 예약${p.id==='TAUNT'?' · '+esc(game.getUnit(p.sourceId)?.name||'부여자 없음'):''}</span>`);
+    if(includePending)for(const p of u.pending)items.push(`<span class="keyword pending">${esc(K[p.id]||p.id)} ${p.potency} 예약${p.id==='TAUNT'?' · '+esc(game.getUnit(p.sourceId)?.name||'부여자 없음'):''}</span>`);
     if(u.counter?.remaining>0)items.push('<span class="keyword">반격 대기</span>');
     return items.join('')||'<span class="muted small">상태이상 없음</span>';
+  }
+
+  function battleVitals(unit:Combatant):string {
+    const hp=Math.max(0,Math.min(unit.hp,unit.maxHp));
+    const percent=unit.maxHp>0?hp/unit.maxHp*100:0;
+    return `<div class="battle-unit-vitals">
+      <div class="unit-health-bar" role="meter" aria-label="${esc(unit.name)} 체력" aria-valuemin="0" aria-valuenow="${hp}" aria-valuemax="${unit.maxHp}">
+        <span class="unit-health-fill" style="width:${percent}%"></span><span class="unit-health-value" aria-hidden="true">${hp}/${unit.maxHp}</span>
+      </div>
+      <div class="unit-keywords" aria-label="${esc(unit.name)} 현재 키워드">${statuses(unit,false)}</div>
+    </div>`;
+  }
+
+  function effectDescription(description?:string, fallback='추가 효과 없음'):string {
+    const lines=(description?.trim()||fallback)
+      .split(/\r?\n|[ \t]+(?=\[[^\]\n]+\])/)
+      .map(line=>line.trim()).filter(Boolean);
+    return `<div class="effect-copy">${lines.map(line=>{
+      const trigger=line.match(/^(\[[^\]]+\])\s*(.+)$/);
+      return trigger
+        ?`<p class="effect-line"><strong class="effect-trigger">${esc(trigger[1])}</strong> ${esc(trigger[2])}</p>`
+        :`<p class="effect-line">${esc(line)}</p>`;
+    }).join('')}</div>`;
   }
 
   // The card illustrations are intentionally empty until custom assets are supplied.
@@ -89,7 +112,7 @@
       const type=`${esc(T[card.type]||card.type)}${card.type==='MULTI_ATTACK'?` · ${Number(card.hitCount)||1}타`:''}`;
       const link=slot?.targetIntentId?' · 합 연결됨':'';
       const targetName=intent&&['ATTACK','MULTI_ATTACK'].includes(card.type)?game.getUnit(intent.targetId)?.name:null;
-      panel.innerHTML=`<div class="skill-info-label">${allyId?'아군 카드':'보스 카드'} · ${esc(owner.name)}${link}</div><strong>${card.enhanced?'강화 ':''}${esc(card.name)}</strong><div class="skill-info-stats"><span>${type}</span><span>위력 ${value}</span><span>속도 ${speed}</span>${cost}</div><p>${esc(card.description||'추가 효과 없음')}</p>${targetName?`<div class="skill-info-target">공격 대상: ${esc(targetName)}</div>`:''}`;
+      panel.innerHTML=`<div class="skill-info-label">${allyId?'아군 카드':'보스 카드'} · ${esc(owner.name)}${link}</div><strong>${card.enhanced?'강화 ':''}${esc(card.name)}</strong><div class="skill-info-stats"><span>${type}</span><span>위력 ${value}</span><span>속도 ${speed}</span>${cost}</div>${effectDescription(card.description)}${targetName?`<div class="skill-info-target">공격 대상: ${esc(targetName)}</div>`:''}`;
     }
     panel.classList.add('visible');panel.setAttribute('aria-hidden','false');
   }
@@ -157,7 +180,7 @@
   function passiveDescriptions(definition?:CardDefinition|CardDefinition[]):string {
     const cards:CardDefinition[]=passiveList(definition);
     return cards.length
-      ? cards.map(card=>`<div class="passive-entry"><strong>${esc(card.name)}</strong><p>${esc(card.description||'효과 설명 없음')}</p></div>`).join('')
+      ? cards.map(card=>`<div class="passive-entry"><strong>${esc(card.name)}</strong>${effectDescription(card.description,'효과 설명 없음')}</div>`).join('')
       : '<p>등록된 패시브가 없습니다.</p>';
   }
   // Optional roster portrait: the actual artwork is supplied later.
@@ -189,7 +212,7 @@
     active?.setAttribute('aria-pressed','false');
     button.setAttribute('aria-pressed','true');
     const cost=inspectedUnit.id==='boss'?'':` · 마력 ${game.manaCost(inspectedUnit,card)}`;
-    detail.innerHTML=`<h3>${esc(card.name)}</h3><small>${cardTypeLabel(card)} · 위력 ${game.finalPower(inspectedUnit,card)}${cost}</small><p>${esc(card.description||'추가 효과 없음')}</p>`;
+    detail.innerHTML=`<h3>${esc(card.name)}</h3><small>${cardTypeLabel(card)} · 위력 ${game.finalPower(inspectedUnit,card)}${cost}</small>${effectDescription(card.description)}`;
   }
   function renderUnitReportTab(tab:string):void {
     if(!inspectedUnit)return;
@@ -307,7 +330,7 @@
     $('characterDetailTitle').textContent=h.name;
     const passives=PASSIVES[h.id];
     const deck=implemented?h.deck:[];
-    $('characterDetailContent').innerHTML=`<div class="detail-head"><div class="detail-portrait">${portraitMarkup(h,owned?esc(h.symbol):'🔒')}</div><div><span class="pill">${owned?'보유':'미보유'}</span><h3>${esc(h.name)}</h3><p>${esc(h.role)}</p>${implemented?`<div class="detail-stats"><span>체력 <b>${h.maxHp}</b></span><span>속도 <b>${h.speed[0]}~${h.speed[1]}</b></span></div>`:'<p class="muted">해당 캐릭터의 상세 데이터와 덱은 추후 추가될 예정입니다.</p>'}</div></div>${implemented?`<div class="detail-block"><h3>전투 패시브</h3>${passiveDescriptions(passives)}</div><div class="detail-block"><h3>고정 덱 · ${deck.length}장</h3><div class="detail-deck">${deck.map((c:any)=>`<div class="detail-card"><span>${esc(c.name)}</span><small>${esc(T[c.type]||c.type)} · 위력 ${c.power} · 마력 ${c.manaCost}</small><p>${esc(c.description||'효과 없음')}</p></div>`).join('')}</div></div>`:''}`;
+    $('characterDetailContent').innerHTML=`<div class="detail-head"><div class="detail-portrait">${portraitMarkup(h,owned?esc(h.symbol):'🔒')}</div><div><span class="pill">${owned?'보유':'미보유'}</span><h3>${esc(h.name)}</h3><p>${esc(h.role)}</p>${implemented?`<div class="detail-stats"><span>체력 <b>${h.maxHp}</b></span><span>속도 <b>${h.speed[0]}~${h.speed[1]}</b></span></div>`:'<p class="muted">해당 캐릭터의 상세 데이터와 덱은 추후 추가될 예정입니다.</p>'}</div></div>${implemented?`<div class="detail-block"><h3>전투 패시브</h3>${passiveDescriptions(passives)}</div><div class="detail-block"><h3>고정 덱 · ${deck.length}장</h3><div class="detail-deck">${deck.map((c:any)=>`<div class="detail-card"><span>${esc(c.name)}</span><small>${esc(T[c.type]||c.type)} · 위력 ${c.power} · 마력 ${c.manaCost}</small>${effectDescription(c.description,'효과 없음')}</div>`).join('')}</div></div>`:''}`;
     $('characterDetailPanel').classList.remove('hidden');
   }
   function renderFormation(){
@@ -484,9 +507,7 @@
     const selected=selectedSlot();
     $('turnBadge').textContent=`TURN ${game.turn}`;
     $('phaseBadge').textContent=`PHASE ${game.phase}`;
-    $('bossHpText').textContent=`${game.boss.hp} / ${game.boss.maxHp}`;
-    $('bossHpBar').style.width=`${Math.max(0,100*game.boss.hp/game.boss.maxHp)}%`;
-    $('bossStatus').innerHTML=statuses(game.boss);
+    $('bossVitals').innerHTML=battleVitals(game.boss);
     $('bossSprite').innerHTML=spriteMarkup(game.boss);
     $('bossSprite').setAttribute('aria-label',`${game.boss.name} 전투 정보`);
     const linked=new Map(allSlots().filter((s:any)=>s.targetIntentId).map((s:any)=>[s.targetIntentId,s]));
@@ -501,12 +522,14 @@
         return `<div class="ally-action-wrap"><span class="hex-speed ally-hex">${s.speed}</span><button type="button" class="slot ${selectedSlotId===s.id?'selected':''} ${c?'equipped':'empty'}" data-slot="${esc(s.id)}" draggable="${planning&&!!c}" ${!planning?'disabled':''} aria-label="${esc(u.name)} 슬롯 ${i+1}, 속도 ${s.speed}${c?`, ${esc(c.name)}, 위력 ${game.finalPower(u,c)}`:', 카드 미장착'}${intent?', 합 연결됨':''}" title="${c?'보스 슬롯으로 드래그하여 합 연결':'클릭하여 손패 표시'}"><span class="action-art">${c?slotIllustration(c,'◆'):'<span class="action-art-empty" aria-hidden="true">＋</span>'}</span></button></div>`;
       }).join('')}</div>
       <button type="button" class="hero-body unit-sprite" data-unit="${esc(u.id)}" aria-haspopup="dialog" aria-label="${esc(u.name)} 전투 정보">${spriteMarkup(u)}</button>
+      ${battleVitals(u)}
     </article>`).join('');
     const hero=selectedHero();
     $('manaDisplay').innerHTML=`<div class="mana-large"><span>마력</span><strong>${hero.mana} <small>/ ${hero.maxMana}</small></strong></div><div class="mana-track"><span style="width:${hero.maxMana?Math.max(0,100*hero.mana/hero.maxMana):0}%"></span></div>`;
-    $('hand').innerHTML=hero.hand.length?hero.hand.map((c:any)=>{
+    $('hand').innerHTML=hero.hand.length?hero.hand.map((c:CardDefinition,index:number)=>{
       const used=hero.slots.some((s:any)=>s.cardUid===c.uid);
-      return `<button class="hand-card ${used?'assigned':''} card-type-${c.type.toLowerCase()}" data-card="${esc(c.uid)}" ${!planning||hero.hp<=0?'disabled':''} aria-label="${esc(c.name)}, 위력 ${game.finalPower(hero,c)}, 마력 ${game.manaCost(hero,c)}"><div class="card-title">${esc(c.name)}</div><div class="card-power" title="최종 카드 위력">${game.finalPower(hero,c)}</div><div class="card-mana" title="소모 마력">${game.manaCost(hero,c)}</div><div class="card-art">${cardIllustration(c)}</div><div class="card-type-label">${glyph[c.type]} ${esc(T[c.type]||c.type)}${c.type==='MULTI_ATTACK'?` · ${c.hitCount}타`:''}</div><div class="card-effect-text">${esc(c.description||'추가 효과 없음')}</div><div class="card-assignment">${used?'장착됨 · 다른 슬롯으로 이동 가능':c.type==='SPECIAL'?'클릭하면 즉시 사용':'클릭하여 장착'}</div></button>`;
+      const offset=hero.hand.length>1 ? index*2/(hero.hand.length-1)-1 : 0;
+      return `<button class="hand-card ${used?'assigned':''} card-type-${c.type.toLowerCase()}" data-card="${esc(c.uid)}" style="--fan-angle:${(offset*4).toFixed(2)}deg;--fan-drop:${(offset*offset*10).toFixed(2)}px" ${!planning||hero.hp<=0?'disabled':''} aria-label="${esc(c.name)}, 위력 ${game.finalPower(hero,c)}, 마력 ${game.manaCost(hero,c)}"><div class="card-title">${esc(c.name)}</div><div class="card-power" title="최종 카드 위력">${game.finalPower(hero,c)}</div><div class="card-mana" title="소모 마력">${game.manaCost(hero,c)}</div><div class="card-art">${cardIllustration(c)}</div><div class="card-type-label">${glyph[c.type]} ${esc(T[c.type]||c.type)}${c.type==='MULTI_ATTACK'?` · ${c.hitCount}타`:''}</div><div class="card-effect-text">${esc(c.description||'추가 효과 없음')}</div><div class="card-assignment">${used?'장착됨 · 다른 슬롯으로 이동 가능':c.type==='SPECIAL'?'클릭하면 즉시 사용':'클릭하여 장착'}</div></button>`;
     }).join(''):'<p class="muted">현재 손패가 없습니다.</p>';
     $('battleStage').textContent=planning?'행동 지정 단계':game.status==='REVIEW'?'턴 전투 결과':game.status==='WON'?'레이드 성공!':'레이드 실패';
     $('stageHelp').textContent=planning?'① 아군 슬롯 선택 → ② 일반 카드 장착 또는 특수 카드 즉시 발동 → ③ 적 슬롯으로 드래그해 합 연결':game.status==='REVIEW'?'전투 기록을 확인하고 다음 턴을 진행하세요.':'편성 화면에서 새 전투를 시작할 수 있습니다.';

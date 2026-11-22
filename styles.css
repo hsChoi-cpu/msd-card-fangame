@@ -626,3 +626,166 @@ body.battle-active .card-effect-text { font-size: clamp(9px, .85vw, 12px); }
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* The hand crosses the lower edge of the arena. HUD controls intercept input
+   only over their own surfaces, leaving the arena and its slots interactive. */
+body.battle-active #battleScreen {
+  --hand-height: clamp(166px, 29dvh, 252px);
+  --hand-overlap: clamp(42px, 8dvh, 78px);
+  --hud-wing: clamp(102px, 13vw, 186px);
+  grid-template-rows: auto minmax(0, 1fr) calc(var(--hand-height) - var(--hand-overlap));
+}
+body.battle-active .battle-arena {
+  padding-bottom: calc(var(--hand-overlap) + 5px);
+  background:
+    linear-gradient(180deg, transparent 56%, #0b122142 57%, #0a111c 100%),
+    radial-gradient(ellipse at 48% 85%, #29364d 0, #1a2538 41%, #121b2b 74%);
+}
+body.battle-active .battle-bottom {
+  position: relative;
+  z-index: 7;
+  grid-template-columns: var(--hud-wing) minmax(0, 1fr) var(--hud-wing);
+  grid-template-rows: minmax(0, 1fr);
+  height: auto;
+  margin-top: calc(-1 * var(--hand-overlap));
+  gap: 8px;
+  pointer-events: none;
+}
+body.battle-active .mana-panel {
+  grid-column: 1;
+  grid-row: 1;
+  background: #1a2337ee;
+  pointer-events: auto;
+}
+body.battle-active .hand-panel {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: 0;
+}
+body.battle-active .hand-panel .hand-grid {
+  justify-content: safe center;
+  align-items: flex-start;
+  padding: 22px 13px 16px;
+  gap: clamp(4px, .65vw, 10px);
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+body.battle-active .hand-panel .hand-card {
+  transform: translateY(var(--fan-drop, 0px)) rotate(var(--fan-angle, 0deg));
+  transform-origin: center 95%;
+  width: clamp(102px, 10.5vw, 156px);
+  min-width: clamp(102px, 10.5vw, 156px);
+  pointer-events: auto;
+  background: linear-gradient(170deg, #283850, #111b2c);
+}
+body.battle-active .hand-panel .hand-card:hover,
+body.battle-active .hand-panel .hand-card:focus-visible {
+  z-index: 6;
+  transform: translateY(-7px);
+  opacity: 1;
+}
+body.battle-active .hand-grid > p { align-self: center; }
+body.battle-active .hand-card .card-effect-text { white-space: pre-line; }
+
+.battle-unit-vitals {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 13px 2.3em;
+  gap: 4px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.battle-hero .battle-unit-vitals { max-width: 160px; margin-top: 5px; }
+#bossVitals { width: min(100%, 270px); margin-inline: auto; flex-shrink: 0; }
+.unit-health-bar {
+  display: grid;
+  place-items: center;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid #73414b;
+  border-radius: 5px;
+  background: #251a25;
+  color: #fff1f1;
+}
+.unit-health-fill {
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  background: linear-gradient(#e6656d, #9f293d);
+}
+.unit-health-value {
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-shadow: 0 1px 2px #25060c, 0 0 3px #25060c;
+}
+.unit-keywords {
+  display: flex;
+  align-content: start;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 3px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.unit-keywords .keyword { padding: 1px 4px; font-size: 9px; line-height: 1.2; overflow-wrap: anywhere; }
+.unit-keywords .small { font-size: 9px; line-height: 1.35; }
+body.battle-active .enemy-side #targetBody {
+  position: absolute;
+  z-index: 2;
+  top: 30px;
+  right: 11px;
+  margin: 0;
+}
+.effect-copy { display: grid; gap: .48em; }
+.effect-copy .effect-line { margin: 0; overflow-wrap: anywhere; }
+.effect-copy .effect-trigger { font-weight: 800; }
+.unit-report .effect-copy { margin-top: .55em; gap: .55em; line-height: 1.55; }
+.unit-report .effect-trigger { color: #724534; }
+.arena-skill-info .effect-copy { margin-top: 5px; }
+.arena-skill-info .effect-trigger { display: inline; font-size: inherit; }
+
+@media (max-width: 760px) {
+  body.battle-active #battleScreen { --hand-height: clamp(177px, 27dvh, 228px); }
+  body.battle-active .battle-bottom {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0;
+  }
+  body.battle-active .hand-panel { grid-column: 1; }
+  body.battle-active .mana-panel {
+    grid-row: 2;
+    width: var(--hud-wing);
+    padding: 3px 6px;
+    margin: 0;
+  }
+  body.battle-active .mana-large strong { font-size: 14px; }
+  body.battle-active .mana-track { height: 4px; margin-top: 1px; }
+  body.battle-active .hand-panel .hand-grid { padding-bottom: 11px; }
+}
+@media (max-height: 540px) {
+  body.battle-active #battleScreen { --hand-height: 139px; --hand-overlap: 39px; }
+  body.battle-active .hand-panel .hand-grid { padding-top: 14px; padding-bottom: 8px; }
+  body.battle-active .hand-panel .hand-card { transform: none; }
+  body.battle-active .battle-arena { padding-top: 34px; }
+  body.battle-active .boss-silhouette, body.battle-active .battle-hero .hero-body { height: clamp(32px, 11dvh, 58px); }
+  .battle-unit-vitals { grid-template-rows: 12px 1.2em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.battle-active .hand-card { transition: none; }
+}
+
+@media (max-width: 460px) {
+  body.battle-active .battle-topline { flex-wrap: wrap; }
+  body.battle-active .battle-topline .toolbar-buttons { flex-wrap: wrap; }
+}
+@media (max-height: 430px) {
+  body.battle-active #battleScreen {
+    grid-template-rows: auto minmax(220px, 1fr) calc(var(--hand-height) - var(--hand-overlap));
+    overflow-y: auto;
+  }
+}
