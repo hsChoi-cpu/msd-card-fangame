@@ -93,6 +93,15 @@ declare const module: any;
     card('b5','심연의 가호','GUARD',12,'방어막을 생성하고 보호 1 획득',[eff('ON_USE','PROTECTION',1)]),
     card('b6','파멸의 일격','ATTACK',26,'2페이즈 강공격')
   ];
+  const PRACTICE_ENCOUNTER: BossEncounter = {
+    name:'심연의 군주', maxHp:260, speed:[3,8], symbol:'👁️', moves:BOSS_MOVES,
+    phaseFor:battle=>battle.boss.hp<=130?2:1,
+    slotCount:battle=>battle.phase===1?3:4,
+    pickMove:battle=>{
+      const pool=battle.phase===1?[0,0,1,2,2,4]:[0,1,1,2,3,3,4,5];
+      return BOSS_MOVES[pool[battle.randint(0,pool.length-1)]];
+    }
+  };
   const clamp = (n: number,min: number,max: number): number => Math.min(max,Math.max(min,n));
   const boundedKeyword = (n: number): number => clamp(Math.trunc(Number.isFinite(n)?n:0),0,99);
   const SINGLE=new Set(['CORROSION','PARALYSIS','DISTRACTION','MANA_BACKFLOW','MANA_LEAK','MANA_EFFICIENCY','REGEN','FOCUS','BLESSING','LIFESTEAL','LOCKDOWN','TAUNT']);
@@ -114,15 +123,17 @@ declare const module: any;
     boss!: Combatant;
     partyIds: string[];
     maxPartySize: number;
+    encounter: BossEncounter;
 
-    constructor(rng:()=>number=Math.random, options: {partyIds?:string[];maxPartySize?:number}={}) {
+    constructor(rng:()=>number=Math.random, options: {partyIds?:string[];maxPartySize?:number;encounter?:BossEncounter}={}) {
       this.rng=rng;
+      this.encounter=options.encounter??PRACTICE_ENCOUNTER;
       this.maxPartySize=options.maxPartySize??6;
       this.partyIds=options.partyIds??['knight','rogue','mage'];
       this.reset();
     }
     passive(owner:Combatant,trigger:EffectTrigger,target:Combatant=owner,extra:any={}) {
-      if(owner?.hp>0 && owner.id!=='boss') {
+      if(owner?.hp>0) {
         for(const card of passiveList(owner.passives??owner.passive)) {
           if(owner.hp<=0)break;
           this.runEffects(card,trigger,owner,target,extra);
@@ -175,9 +186,11 @@ declare const module: any;
           maxMana:MANA[h.id].max,mana:MANA[h.id].max,manaRegen:MANA[h.id].regen,usedThisTurn:0,lastTurnUsed:0,...passives,
           deck:this.shuffle(h.deck.map((c,i)=>({...copy(c),uid:`${h.id}-${i}`}))),hand:[],discard:[],exhaust:[],slots:[]};
       });
-      this.boss={id:'boss',name:'심연의 군주',symbol:'👁️',hp:260,maxHp:260,speed:[3,8],keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
+      const {name,maxHp,speed,symbol,portrait,sprite,passives}=this.encounter;
+      this.boss={id:'boss',name,symbol,portrait,sprite,hp:maxHp,maxHp,speed:[...speed],passives:copy(passives??[]),keywords:{},pending:[],counter:null,evadeSource:null,intents:[]};
       this.note('전투 시작! 각 캐릭터의 고정 덱으로 보스에 대응하세요.');
       for(const unit of this.allies){for(const c of [...unit.deck])this.runEffects(c,'ON_BATTLE_START',unit,unit,{silent:true});this.passive(unit,'ON_BATTLE_START');}
+      this.passive(this.boss,'ON_BATTLE_START');
       this.startTurn();
     }
     note(s){this.log.push({turn:this.turn,text:s});}
@@ -339,7 +352,7 @@ declare const module: any;
       this.emit('SPECIAL_PLAYED',{ownerId:owner.id,cardId:c.id,targetId:target.id});
       // activate invokes ON_USE and owner passive exactly once.
       this.activate(c,owner,target);
-      if(this.boss.hp<=0){this.status='WON';this.note('🏆 레이드 성공! 심연의 군주를 격파했습니다.');}
+      if(this.boss.hp<=0){this.status='WON';this.note(`🏆 레이드 성공! ${this.boss.name} 격파`);}
       else if(!this.allies.some(a=>a.hp>0)){this.status='LOST';this.note('☠ 레이드 실패! 모든 아군이 쓰러졌습니다.');}
       return {ok:true};
     }
@@ -359,7 +372,7 @@ declare const module: any;
     }
     startTurn(){
       if(this.status==='WON'||this.status==='LOST')return;
-      this.turn++;this.effectBudget=0;this.status='PLANNING';this.phase=this.boss.hp<=130?2:1;
+      this.turn++;this.effectBudget=0;this.status='PLANNING';this.phase=this.encounter.phaseFor?.(this)??1;
       this.note(`──── ${this.turn}턴 시작 / 보스 ${this.phase}페이즈 ────`);
       this.emit('TURN_START',{turn:this.turn});
       for(const u of [...this.allies,this.boss])this.activatePending(u);
@@ -372,9 +385,9 @@ declare const module: any;
       if(!this.allies.some(a=>a.hp>0)){this.status='LOST';this.note('☠ 모든 아군이 턴 시작 상태 효과로 쓰러졌습니다.');return;}
       const taunt=this.boss.keywords.TAUNT;
       if(taunt && (!this.getUnit(taunt.sourceId)||this.getUnit(taunt.sourceId).hp<=0))delete this.boss.keywords.TAUNT;
-      this.phase=this.boss.hp<=130?2:1;
+      this.phase=this.encounter.phaseFor?.(this)??1;
       this.runLifecycleEffects('ON_TURN_START');
-      for(const unit of this.allies)this.passive(unit,'ON_TURN_START');
+      for(const unit of [...this.allies,this.boss])this.passive(unit,'ON_TURN_START');
       const count=this.allies.length;
       const minimum=Math.floor(this.maxPartySize/count), extra=this.maxPartySize%count;
       for(const [index,unit] of this.allies.entries()){
@@ -388,12 +401,10 @@ declare const module: any;
           this.note(`${unit.name}: ${n}장 드로우 요청 (손패 ${unit.hand.length}장)`);
         }
       }
-      const phase=this.phase;
       const taunter=this.getUnit(this.boss.keywords.TAUNT?.sourceId);
       const forcedTarget=taunter?.hp>0?taunter:null;
-      this.boss.intents=Array.from({length:phase===1?3:4},(_,i)=>{
-        let pool=phase===1?[0,0,1,2,2,4]:[0,1,1,2,3,3,4,5];
-        const m=copy(BOSS_MOVES[pool[this.randint(0,pool.length-1)]]);
+      this.boss.intents=Array.from({length:this.encounter.slotCount(this)},(_,i)=>{
+        const m=copy(this.encounter.pickMove(this,i));
         const living=this.allies.filter(a=>a.hp>0);
         const target=m.type==='GUARD'?'boss':(forcedTarget??living[this.randint(0,living.length-1)])?.id??'boss';
         return {id:`boss-t${this.turn}-s${i}`,ownerId:'boss',speed:this.speedFor(this.boss),card:m,targetId:target};
@@ -443,7 +454,7 @@ declare const module: any;
     runLifecycleEffects(trigger) {
       for(const owner of [...this.allies,this.boss]) {
         if(owner.hp<=0)continue;
-        const owned=owner.id==='boss'?BOSS_MOVES:owner.deck.concat(owner.hand,owner.discard);
+        const owned=owner.id==='boss'?this.encounter.moves:owner.deck.concat(owner.hand,owner.discard);
         const seen=new Set();
         for(const c of owned){
           if(seen.has(c.id))continue;
@@ -871,7 +882,7 @@ declare const module: any;
         unit.slots=[];
       }
       this.endTurn();
-      if(this.boss.hp<=0){this.status='WON';this.note('🏆 레이드 성공! 심연의 군주를 격파했습니다.');}
+      if(this.boss.hp<=0){this.status='WON';this.note(`🏆 레이드 성공! ${this.boss.name} 격파`);}
       else if(!this.allies.some(a=>a.hp>0)){this.status='LOST';this.note('☠ 레이드 실패! 모든 아군이 쓰러졌습니다.');}
       else this.status='REVIEW';
     }
@@ -898,7 +909,7 @@ declare const module: any;
       this.emit('TURN_END',{turn:this.turn});
       this.tickEndKeywords();
       this.runLifecycleEffects('ON_TURN_END');
-      for(const unit of this.allies)this.passive(unit,'ON_TURN_END');
+      for(const unit of [...this.allies,this.boss])this.passive(unit,'ON_TURN_END');
       for(const unit of [...this.allies,this.boss]){
         for(const [id,k] of Object.entries(unit.keywords)){
           if(NO_DECAY.has(id)||['CORROSION','REGEN','PARALYSIS'].includes(id))continue;

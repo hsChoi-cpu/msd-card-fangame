@@ -25,12 +25,36 @@
       <div class="collection-layout"><section class="collection-grid-shell" aria-label="캐릭터 목록"><div id="collectionCount" class="collection-count"></div><div id="collectionGrid" class="collection-grid"></div></section><aside class="panel collection-filters"><h3>캐릭터 검색</h3><label for="characterSearch">이름 검색</label><input type="search" id="characterSearch" placeholder="이름을 입력하세요" autocomplete="off"/><label for="ownershipFilter">보유 상태</label><select id="ownershipFilter"><option value="all">전체 보기</option><option value="owned">보유 캐릭터</option><option value="locked">미보유 캐릭터</option></select><label for="keywordFilter">사용 키워드</label><select id="keywordFilter"><option value="all">모든 키워드</option></select><button id="clearFilters" class="ghost">필터 초기화</button><div class="filter-help">해금된 캐릭터의 실제 카드 데이터로 키워드를 분류합니다. 상세 데이터가 없는 캐릭터는 <b>준비 중</b>으로 표시됩니다.</div><div id="unlockProgress" class="unlock-progress"></div></aside></div>
     </main>
 
-    <main id="formationScreen" class="screen">
+    <main id="raidScreen" class="screen raid-screen hidden" aria-labelledby="raidTitle">
+      <header class="raid-heading">
+        <h2 id="raidTitle" tabindex="-1">보스 선택</h2>
+        <button id="practiceRaid" class="ghost" type="button">연습 전투</button>
+      </header>
+      <div class="raid-layout">
+        <section id="raidRing" class="raid-ring" aria-label="보스 목록">
+          <div class="raid-ring-art" aria-hidden="true"><div id="raidMarker" class="raid-marker"></div><span class="raid-seal"></span></div>
+          <div id="raidBosses"></div>
+        </section>
+        <section class="raid-panel" aria-labelledby="raidBossName">
+          <div class="raid-boss-heading">
+            <div id="raidPortrait" class="raid-portrait" aria-hidden="true"></div>
+            <div><h3 id="raidBossName"></h3><p id="raidBossStatus"></p></div>
+          </div>
+          <div id="raidDifficulties" class="raid-difficulties" aria-label="난이도"></div>
+          <p id="raidNotice" role="status" class="raid-notice"></p>
+          <button id="chooseRaid" type="button" class="primary raid-enter"></button>
+        </section>
+      </div>
+      <audio id="raidBgm" loop preload="none"></audio>
+    </main>
+
+    <main id="formationScreen" class="screen hidden">
       <section class="panel formation-header">
         <div class="eyebrow">01 / RAID PREPARATION</div>
         <h2>출전 캐릭터 편성</h2>
         <p class="muted">보유 캐릭터 중 최대 6명을 편성합니다. 선택 순서에 따라 행동 슬롯이 배분됩니다.</p>
-        <div class="formation-toolbar"><span id="partyCount" class="pill">0 / 6명</span><button id="applyParty" class="primary">레이드 시작 →</button></div>
+        <p id="formationRaid" class="formation-raid"></p>
+        <div class="formation-toolbar"><button id="formationToRaid" class="ghost" type="button">← 보스 선택</button><span id="partyCount" class="pill">0 / 6명</span><button id="applyParty" class="primary">레이드 시작 →</button></div>
       </section>
       <div class="formation-columns">
         <section class="panel formation-available"><div class="section-top"><div><div class="eyebrow">AVAILABLE UNITS</div><h2>캐릭터 목록</h2></div></div><div id="partyPicker" class="roster"></div></section>
@@ -39,7 +63,7 @@
     </main>
 
     <main id="battleScreen" class="screen hidden">
-      <div class="battle-topline"><div><div class="eyebrow">02 / RAID BATTLE</div><h2 id="battleStage">행동 지정 단계</h2><p id="stageHelp" class="small muted">아군 슬롯 → 손패 카드 → 장착된 슬롯을 적 슬롯으로 드래그</p></div><div class="toolbar-buttons"><button id="clearSlot" class="ghost">장착 해제</button><button id="execute" class="primary">⚔ 전투 실행</button><button id="nextTurn" class="primary hidden">다음 턴 →</button><button id="reset" class="ghost">↻ 다시 시작</button></div></div>
+      <div class="battle-topline"><div><div class="eyebrow">02 / RAID BATTLE</div><h2 id="battleStage">행동 지정 단계</h2><p id="stageHelp" class="small muted">아군 슬롯 → 손패 카드 → 장착된 슬롯을 적 슬롯으로 드래그</p></div><div class="toolbar-buttons"><button id="returnToRaid" class="ghost hidden" type="button">보스 선택으로</button><button id="clearSlot" class="ghost">장착 해제</button><button id="execute" class="primary">⚔ 전투 실행</button><button id="nextTurn" class="primary hidden">다음 턴 →</button><button id="reset" class="ghost">↻ 다시 시작</button></div></div>
 
       <section class="battle-arena" id="battleArena" aria-label="전투 화면"><div id="allySkillInfo" class="arena-skill-info ally-info" role="tooltip" aria-live="off" aria-hidden="true"></div><div id="enemySkillInfo" class="arena-skill-info enemy-info" role="tooltip" aria-live="off" aria-hidden="true"></div><svg id="clashConnections" class="clash-connections" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
         <div class="arena-side allies-side"><div class="arena-heading"><span>ALLIED PARTY</span><span>아군</span></div><div id="heroes" class="battle-heroes"></div></div>

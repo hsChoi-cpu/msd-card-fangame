@@ -15,3 +15,26 @@ interface HeroTemplate {id:string;name:string;role:string;symbol:string;maxHp:nu
 interface BattleEvent {type:string;turn:number;order:number;[key:string]:any}
 // UI and battle logic share the following run-time shape; further refinement is safe as rules stabilize.
 interface Combatant {id:string;name:string;hp:number;maxHp:number;speed:number[];keywords:Record<string,KeywordInstance>;pending:PendingKeyword[];counter:any;evadeSource:any;deck?:CardDefinition[];hand?:CardDefinition[];discard?:CardDefinition[];exhaust?:CardDefinition[];slots?:any[];intents?:any[];role?:string;symbol?:string;color?:string;portrait?:string;sprite?:string;maxMana?:number;mana?:number;manaRegen?:number;usedThisTurn?:number;lastTurnUsed?:number;passive?:CardDefinition;passives?:CardDefinition[];[key:string]:any}
+
+interface BossBattleContext {
+  boss: Combatant;
+  allies: Combatant[];
+  turn: number;
+  phase: number;
+  randint(min: number, max: number): number;
+  kw(unit: Combatant, id: KeywordId): number;
+}
+
+interface BossEncounter {
+  name: string;
+  maxHp: number;
+  speed: [number, number];
+  moves: readonly CardDefinition[];
+  symbol?: string;
+  portrait?: string;
+  sprite?: string;
+  passives?: CardDefinition[];
+  phaseFor?: (battle: BossBattleContext) => number;
+  slotCount: (battle: BossBattleContext) => number;
+  pickMove: (battle: BossBattleContext, slotIndex: number) => CardDefinition;
+}

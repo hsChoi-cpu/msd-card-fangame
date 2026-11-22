@@ -1,10 +1,26 @@
 (() => {
   'use strict';
-  const { RaidBattle, HEROES, PASSIVES, BOSS_MOVES, K, T, passiveList, sortSlotsBySpeed } = (window as any).RaidEngine;
+  const { RaidBattle, HEROES, PASSIVES, K, T, passiveList, sortSlotsBySpeed } = (window as any).RaidEngine;
   let partyIds: string[] = ['knight', 'rogue', 'mage'];
   let game: any = null;
   let selectedSlotId: string | null = null;
-  let screen: 'home'|'collection'|'formation'|'battle' = 'home';
+  type Screen = 'home'|'collection'|'raid'|'formation'|'battle';
+  let screen:Screen='home';
+  const campaign=(window as any).RaidCampaign;
+  const raidBosses:readonly (RaidBossEntry|null)[]=campaign.bosses;
+  const raidDifficulties:readonly RaidDifficulty[]=campaign.difficulties;
+  const RAID_SAVE='magical-girls-city:raid-progress:v1';
+  let raidProgress:RaidProgress=campaign.readProgress(null);
+  try { raidProgress=campaign.readProgress(JSON.parse(localStorage.getItem(RAID_SAVE)||'null')); } catch {}
+  let bossIndex=Math.min(raidBosses.length-1, Math.floor(raidProgress.regularClears/2));
+  let difficulty:RaidDifficulty=raidProgress.regularClears===campaign.regularClearCount
+    ?raidProgress.announcedClears===raidProgress.regularClears?'OBLIVION':'CALAMITY'
+    :raidProgress.regularClears%2===1?'CALAMITY':'OMEN';
+  let raidRoute:{index:number;difficulty:RaidDifficulty}|null=null;
+  let handledVictory=false;
+  let revealTimer:ReturnType<typeof setTimeout>|undefined;
+  let audioContext:AudioContext|undefined;
+  let raidAnnouncement='';
   const TOTAL_ROSTER=27;
   const PROGRESS_KEY='magical-girls-city:unlocked:v1';
   const originalHeroes=HEROES as any[];
@@ -155,7 +171,7 @@
   let inspectionOrigin:HTMLButtonElement|null=null;
 
   function inspectionCards(unit:Combatant):CardDefinition[] {
-    return unit.id==='boss' ? BOSS_MOVES : [...(unit.deck??[]), ...(unit.hand??[]), ...(unit.discard??[])];
+    return unit.id==='boss' ? game.encounter.moves : [...(unit.deck??[]), ...(unit.hand??[]), ...(unit.discard??[])];
   }
   function cardTypeLabel(card:CardDefinition):string {
     return `${esc(T[card.type]||card.type)}${card.type==='MULTI_ATTACK'?` · ${card.hitCount}타`:''}`;
@@ -304,23 +320,162 @@
       return `<div class="order-item"><div class="order-number">${i+1}</div><div class="order-copy"><strong>${esc(h.symbol)} ${esc(h.name)}</strong><small>행동 슬롯 ${slotCounts[i]}개 · 첫 턴 ${slotCounts[i]+2}장</small></div><div class="order-buttons"><button data-move="${esc(id)}" data-direction="up" title="앞으로" ${i===0?'disabled':''}>↑</button><button data-move="${esc(id)}" data-direction="down" title="뒤로" ${i===partyIds.length-1?'disabled':''}>↓</button><button data-party="${esc(id)}" title="편성 제외">×</button></div></div>`;
     }).join('');
   }
-  function showScreen(next:'home'|'collection'|'formation'|'battle'){
+  function saveRaidProgress():void {
+    try { localStorage.setItem(RAID_SAVE,JSON.stringify(raidProgress)); } catch {}
+  }
+  function visibleRaidProgress() {
+    if(raidProgress.regularClears===campaign.regularClearCount && raidProgress.announcedClears<raidProgress.regularClears){
+      return {...raidProgress,regularClears:campaign.regularClearCount-1};
+    }
+    return raidProgress;
+  }
+  function renderRaidSelection():void {
+    const progress=visibleRaidProgress();
+    $('raidBosses').innerHTML=raidBosses.map((entry,index)=>{
+      const angle=(index+1)*Math.PI/6;
+      const x=50+40*Math.sin(angle), y=50-40*Math.cos(angle);
+      const unlocked=campaign.isUnlocked(progress,index,'OMEN');
+      const cleared=campaign.isCleared(progress,index,'CALAMITY');
+      const label=entry?.name??`보스 ${index+1}`;
+      return `<button class="raid-node ${unlocked?'':'locked'} ${cleared?'cleared':''}" type="button" data-raid-boss="${index}" style="--x:${x.toFixed(3)}%;--y:${y.toFixed(3)}%" aria-pressed="${index===bossIndex}" aria-label="${esc(label)}, ${cleared?'CALAMITY 클리어':unlocked?'개방':'잠김'}"><span>${String(index+1).padStart(2,'0')}</span>${cleared?'<span class="raid-node-dot" aria-hidden="true"></span>':''}</button>`;
+    }).join('');
+    const entry=raidBosses[bossIndex];
+    const portrait=unitImage(entry?.portrait);
+    $('raidPortrait').innerHTML=portrait?`<img src="${esc(portrait)}" alt=""/>`:'<span></span>';
+    $('raidBossName').textContent=entry?.name??`보스 ${bossIndex+1}`;
+    $('raidBossStatus').textContent=!campaign.isUnlocked(progress,bossIndex,'OMEN')
+      ?'잠김':entry?'개방':'전투 준비 중';
+    $('raidDifficulties').innerHTML=raidDifficulties.map(level=>{
+      const unlocked=campaign.isUnlocked(progress,bossIndex,level);
+      const status=campaign.isCleared(progress,bossIndex,level)?'클리어':!unlocked?'잠김':entry?.encounters[level]?'도전 가능':'개방 · 준비 중';
+      return `<button type="button" data-difficulty="${level}" aria-pressed="${level===difficulty}"><strong>${level}</strong><span>${status}</span></button>`;
+    }).join('');
+    const unlocked=campaign.isUnlocked(progress,bossIndex,difficulty);
+    const configured=!!entry?.encounters[difficulty];
+    $('chooseRaid').disabled=!unlocked||!configured;
+    $('chooseRaid').textContent=!unlocked?'잠김':configured?'출전 편성 →':'전투 준비 중';
+    $('raidNotice').textContent=raidAnnouncement || (unlocked?'':!campaign.isUnlocked(progress,bossIndex,'OMEN')
+      ?'이전 보스의 CALAMITY를 클리어하면 개방됩니다.'
+      :difficulty==='CALAMITY'?'이 보스의 OMEN을 클리어하면 개방됩니다.':'마지막 보스의 CALAMITY를 클리어하면 개방됩니다.');
+  }
+  function raidMusic():HTMLAudioElement {
+    return document.getElementById('raidBgm') as HTMLAudioElement;
+  }
+  function playRaidMusic():void {
+    const music=raidMusic();
+    if(music.getAttribute('src'))void music.play().catch(()=>{});
+  }
+  function playRaidTick():void {
+    const context=audioContext;
+    if(!context||context.state!=='running')return;
+    const oscillator=context.createOscillator();
+    const gain=context.createGain();
+    const at=context.currentTime;
+    oscillator.type='triangle';
+    oscillator.frequency.setValueAtTime(880,at);
+    oscillator.frequency.exponentialRampToValueAtTime(360,at+.07);
+    gain.gain.setValueAtTime(.06,at);
+    gain.gain.exponentialRampToValueAtTime(.001,at+.09);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(at);
+    oscillator.stop(at+.1);
+    oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
+  }
+  function enterRaidScreen():void {
+    const marker=$('raidMarker');
+    const before=raidProgress.announcedClears;
+    const after=raidProgress.regularClears;
+    marker.style.setProperty('--marker-angle',`${before-campaign.regularClearCount}deg`);
+    renderRaidSelection();
+    const oblivionCount=raidProgress.oblivionClears.length;
+    const newOblivion=oblivionCount>raidProgress.announcedOblivion;
+    if(after<=before&&!newOblivion){
+      playRaidMusic();
+      return;
+    }
+    const final=after>before&&after===campaign.regularClearCount;
+    if(final){
+      raidMusic().pause();
+      try {
+        if(typeof AudioContext!=='undefined'){
+          audioContext??=new AudioContext();
+          void audioContext.resume().catch(()=>{});
+        }
+      } catch {}
+    }
+    const finish=()=>{
+      revealTimer=undefined;
+      raidProgress={...raidProgress,announcedClears:after,announcedOblivion:oblivionCount};
+      saveRaidProgress();
+      if(!final)return;
+      raidAnnouncement='모든 보스의 OBLIVION 난이도가 개방되었습니다.';
+      const active=document.activeElement as HTMLElement|null;
+      renderRaidSelection();
+      if(active?.dataset.raidBoss!==undefined)$('raidBosses').querySelector<HTMLElement>(`[data-raid-boss="${active.dataset.raidBoss}"]`)?.focus();
+      if(active?.dataset.difficulty!==undefined)$('raidDifficulties').querySelector<HTMLElement>(`[data-difficulty="${active.dataset.difficulty}"]`)?.focus();
+      playRaidMusic();
+    };
+    revealTimer=setTimeout(()=>{
+      marker.style.setProperty('--marker-angle',`${after-campaign.regularClearCount}deg`);
+      if(newOblivion&&typeof marker.animate==='function'&&
+        !document.documentElement.classList.contains('reduced-motion')&&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+        marker.animate([{opacity:1},{opacity:.35},{opacity:1}],{duration:420});
+      }
+      if(final){
+        playRaidTick();
+        revealTimer=setTimeout(finish,380);
+      }else finish();
+    },final?190:70);
+    if(!final)playRaidMusic();
+  }
+  function showScreen(next:Screen){
+    if(screen==='raid'&&next!=='raid'){
+      clearTimeout(revealTimer);
+      revealTimer=undefined;
+      raidAnnouncement='';
+    }
+    if(next==='home'&&raidMusic().getAttribute('src'))raidMusic().pause();
     if(next!=='battle'&&unitDialog.open)unitDialog.close();
-    if(next!=='battle'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');}
+    if(next!=='battle'){pendingSpecial=null;$('specialTargetPanel').classList.add('hidden');$('discardChoicePanel').classList.add('hidden');}
     screen=next;
     document.body.classList.toggle('battle-active',next==='battle');
-    for(const [type,id] of [['home','homeScreen'],['collection','collectionScreen'],['formation','formationScreen'],['battle','battleScreen']])$(id).classList.toggle('hidden',type!==next);
+    for(const [type,id] of [['home','homeScreen'],['collection','collectionScreen'],['raid','raidScreen'],['formation','formationScreen'],['battle','battleScreen']])$(id).classList.toggle('hidden',type!==next);
     $('turnBadge').classList.toggle('hidden',next!=='battle');$('backToParty').classList.toggle('hidden',next!=='battle');$('toHome').classList.toggle('hidden',next==='home');
-    if(next==='formation')renderFormation();else if(next==='collection')renderCollection();else if(next==='battle')renderBattle();
+    if(next==='formation'){
+      const encounter=raidRoute&&raidBosses[raidRoute.index]?.encounters[raidRoute.difficulty];
+      $('formationRaid').textContent=encounter&&raidRoute?`${encounter.name} · ${raidRoute.difficulty}`:'연습 전투 · 심연의 군주';
+      renderFormation();
+    }else if(next==='collection')renderCollection();
+    else if(next==='battle')renderBattle();
+    else if(next==='raid'){
+      enterRaidScreen();
+      $('raidTitle').focus();
+    }
     window.scrollTo(0,0);
   }
   function beginBattle(){
-    game=new RaidBattle(Math.random,{partyIds:[...partyIds]});
+    const encounter=raidRoute ? raidBosses[raidRoute.index]?.encounters[raidRoute.difficulty] : undefined;
+    if(raidRoute&&(!encounter||!campaign.isUnlocked(raidProgress,raidRoute.index,raidRoute.difficulty))){
+      showScreen('raid');
+      return;
+    }
+    game=new RaidBattle(Math.random,{partyIds:[...partyIds],encounter});
+    handledVictory=false;
     selectedSlotId=game.allies[0]?.slots[0]?.id||null;
     showScreen('battle');
   }
   function renderBattle(){
     if(!game)return;
+    if(game.status==='WON'&&!handledVictory){
+      handledVictory=true;
+      if(raidRoute){
+        raidProgress=campaign.recordClear(raidProgress,raidRoute.index,raidRoute.difficulty);
+        saveRaidProgress();
+      }
+      unlockAfterWin();
+    }
+    $('returnToRaid').classList.toggle('hidden',game.status!=='WON'&&game.status!=='LOST');
     const planning=game.status==='PLANNING';
     const selected=selectedSlot();
     $('turnBadge').textContent=`TURN ${game.turn}`;
@@ -329,6 +484,7 @@
     $('bossHpBar').style.width=`${Math.max(0,100*game.boss.hp/game.boss.maxHp)}%`;
     $('bossStatus').innerHTML=statuses(game.boss);
     $('bossSprite').innerHTML=spriteMarkup(game.boss);
+    $('bossSprite').setAttribute('aria-label',`${game.boss.name} 전투 정보`);
     const linked=new Map(allSlots().filter((s:any)=>s.targetIntentId).map((s:any)=>[s.targetIntentId,s]));
     // UI-only sort: never mutate intent IDs, linked slot IDs or execution order.
     $('intents').innerHTML=sortSlotsBySpeed(game.boss.intents).map((x:any,i:number)=>{
@@ -381,7 +537,7 @@
   document.addEventListener('click',ev=>{
     const target=ev.target as HTMLElement;
     if(screen==='collection'){const detail=target.closest<HTMLElement>('[data-detail]');if(detail)showCharacterDetail(detail.dataset.detail!);return;}
-    if(screen==='home')return;
+    if(screen==='home'||screen==='raid')return;
     if(screen==='formation'){
       const move=target.closest<HTMLElement>('[data-move]');
       if(move){const idx=partyIds.indexOf(move.dataset.move!);const other=idx+(move.dataset.direction==='up'?-1:1);if(idx>=0&&other>=0&&other<partyIds.length){[partyIds[idx],partyIds[other]]=[partyIds[other],partyIds[idx]];renderFormation();}return;}
@@ -504,7 +660,35 @@
   window.addEventListener('scroll',scheduleClashLines,{passive:true});
   if(typeof ResizeObserver!=='undefined'){new ResizeObserver(scheduleClashLines).observe($('battleArena'));}
   $('openCollection').addEventListener('click',()=>showScreen('collection'));
-  $('openFormation').addEventListener('click',()=>showScreen('formation'));
+  $('openFormation').addEventListener('click',()=>showScreen('raid'));
+  $('formationToRaid').addEventListener('click',()=>showScreen('raid'));
+  $('returnToRaid').addEventListener('click',()=>showScreen('raid'));
+  $('practiceRaid').addEventListener('click',()=>{
+    raidRoute=null;
+    showScreen('formation');
+  });
+  $('chooseRaid').addEventListener('click',()=>{
+    if(!campaign.isUnlocked(visibleRaidProgress(),bossIndex,difficulty)||
+      !raidBosses[bossIndex]?.encounters[difficulty])return;
+    raidRoute={index:bossIndex,difficulty};
+    showScreen('formation');
+  });
+  $('raidBosses').addEventListener('click',ev=>{
+    const button=(ev.target as HTMLElement).closest<HTMLElement>('[data-raid-boss]');
+    if(!button)return;
+    bossIndex=Number(button.dataset.raidBoss);
+    const progress=visibleRaidProgress();
+    difficulty=raidDifficulties.find(level=>campaign.isUnlocked(progress,bossIndex,level)&&!campaign.isCleared(progress,bossIndex,level))??'OMEN';
+    renderRaidSelection();
+    $('raidBosses').querySelector<HTMLElement>(`[data-raid-boss="${bossIndex}"]`)?.focus();
+  });
+  $('raidDifficulties').addEventListener('click',ev=>{
+    const button=(ev.target as HTMLElement).closest<HTMLElement>('[data-difficulty]');
+    if(!button)return;
+    difficulty=button.dataset.difficulty as RaidDifficulty;
+    renderRaidSelection();
+    $('raidDifficulties').querySelector<HTMLElement>(`[data-difficulty="${difficulty}"]`)?.focus();
+  });
   $('collectionBack').addEventListener('click',()=>showScreen('home'));
   $('toHome').addEventListener('click',()=>showScreen('home'));
   $('homeSettings').addEventListener('click',()=>$('settingsPanel').classList.remove('hidden'));
@@ -522,7 +706,7 @@
   $('reset').addEventListener('click',()=>{if(confirm('현재 전투를 초기화하고 같은 편성으로 다시 시작할까요?'))beginBattle();});
   $('clearSlot').addEventListener('click',()=>{if(selectedSlotId){game.unassign(selectedSlotId);renderBattle();}});
   $('targetBody').addEventListener('click',()=>{if(selectedSlotId){game.unlink(selectedSlotId);renderBattle();toast('합 연결을 해제했습니다.');}});
-  $('execute').addEventListener('click',()=>{game.resolveTurn();selectedSlotId=null;if(game.status==='WON')unlockAfterWin();renderBattle();});
+  $('execute').addEventListener('click',()=>{game.resolveTurn();selectedSlotId=null;renderBattle();});
   $('nextTurn').addEventListener('click',()=>{game.nextTurn();selectedSlotId=game.allies.find((u:any)=>u.slots.length)?.slots[0]?.id||null;renderBattle();});
   $('copyLog').addEventListener('click',()=>{const value=game.log.map((l:any)=>`[턴 ${l.turn}] ${l.text}`).join('\n');if(navigator.clipboard?.writeText)navigator.clipboard.writeText(value).then(()=>toast('전투 기록을 복사했습니다.')).catch(()=>toast('복사에 실패했습니다.'));else toast('클립보드를 지원하지 않습니다.');});
   showScreen('home');
