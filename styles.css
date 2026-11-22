@@ -619,3 +619,10 @@ body.battle-active .card-effect-text { font-size: clamp(9px, .85vw, 12px); }
 @media (prefers-reduced-motion: reduce) {
   .raid-marker { transition: none; }
 }
+
+@media (max-width:640px) {
+  body.battle-active .battle-intents:has(.boss-action-wrap:nth-child(5)) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

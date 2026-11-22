@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const { RaidBattle, HEROES, PASSIVES, K, T, passiveList, sortSlotsBySpeed } = (window as any).RaidEngine;
+  const { RaidBattle, HEROES, PASSIVES, K, T, actionSlotCounts, passiveList, sortSlotsBySpeed } = (window as any).RaidEngine;
   let partyIds: string[] = ['knight', 'rogue', 'mage'];
   let game: any = null;
   let selectedSlotId: string | null = null;
@@ -41,12 +41,15 @@
   function selectedSlot():any{return allSlots().find((s:any)=>s.id===selectedSlotId)||null;}
   function selectedHero():any{const s=selectedSlot();return s?game.getUnit(s.ownerId):game.allies.find((u:any)=>u.hp>0)||game.allies[0];}
   function statuses(u:any):string {
-    const items=Object.entries(u.keywords as Record<string,{potency:number;count:number|null;sourceId?:string}>).map(([id,v])=>`<span class="keyword" title="키워드 위력과 횟수">${esc(id.startsWith('MARK:')?'표식-'+(game.getUnit(v.sourceId)?.name||v.sourceId||'알 수 없음'):(K[id]||id))} ${v.potency}${v.count===null?'':` · ${v.count}회`}</span>`);
+    const items=Object.entries((u as Combatant).keywords).map(([id,v])=>{
+      const resource=game.bossResource(u,id);
+      const label=id.startsWith('MARK:')?'표식-'+(game.getUnit(v.sourceId)?.name||v.sourceId||'알 수 없음'):(resource?.name??K[id]??id);
+      return `<span class="keyword" title="${esc(resource?.tooltip??'키워드 위력과 횟수')}">${esc(label)} ${v.potency}${v.count===null?'':` · ${v.count}회`}</span>`;
+    });
     for(const p of u.pending)items.push(`<span class="keyword pending">${esc(K[p.id]||p.id)} ${p.potency} 예약${p.id==='TAUNT'?' · '+esc(game.getUnit(p.sourceId)?.name||'부여자 없음'):''}</span>`);
     if(u.counter?.remaining>0)items.push('<span class="keyword">반격 대기</span>');
     return items.join('')||'<span class="muted small">상태이상 없음</span>';
   }
-  function distribute(n:number):number[]{return Array.from({length:n},(_,i)=>Math.floor(6/n)+(i<6%n?1:0));}
 
   // The card illustrations are intentionally empty until custom assets are supplied.
   // CardDefinition.image: "assets/cards/example.png" (relative path only).
@@ -85,8 +88,8 @@
       const cost=allyId?`<span>마력 ${game.manaCost(owner,card)}</span>`:'';
       const type=`${esc(T[card.type]||card.type)}${card.type==='MULTI_ATTACK'?` · ${Number(card.hitCount)||1}타`:''}`;
       const link=slot?.targetIntentId?' · 합 연결됨':'';
-      const targetName=intent?game.getUnit(intent.targetId)?.name:null;
-      panel.innerHTML=`<div class="skill-info-label">${allyId?'아군 카드':'보스 카드'} · ${esc(owner.name)}${link}</div><strong>${esc(card.name)}</strong><div class="skill-info-stats"><span>${type}</span><span>위력 ${value}</span><span>속도 ${speed}</span>${cost}</div><p>${esc(card.description||'추가 효과 없음')}</p>${targetName?`<div class="skill-info-target">공격 대상: ${esc(targetName)}</div>`:''}`;
+      const targetName=intent&&['ATTACK','MULTI_ATTACK'].includes(card.type)?game.getUnit(intent.targetId)?.name:null;
+      panel.innerHTML=`<div class="skill-info-label">${allyId?'아군 카드':'보스 카드'} · ${esc(owner.name)}${link}</div><strong>${card.enhanced?'강화 ':''}${esc(card.name)}</strong><div class="skill-info-stats"><span>${type}</span><span>위력 ${value}</span><span>속도 ${speed}</span>${cost}</div><p>${esc(card.description||'추가 효과 없음')}</p>${targetName?`<div class="skill-info-target">공격 대상: ${esc(targetName)}</div>`:''}`;
     }
     panel.classList.add('visible');panel.setAttribute('aria-hidden','false');
   }
@@ -244,6 +247,7 @@
     const condition=Object.keys(unit.keywords).length||unit.pending.length||unit.counter?.remaining>0
       ? `<div class="report-status" aria-label="상태 효과">${statuses(unit)}</div>` : '';
     $('unitReportVitals').innerHTML=`<div class="report-resource report-hp"><span>체력</span><b>${unit.hp} / ${unit.maxHp}</b><meter min="0" max="${unit.maxHp}" value="${unit.hp}" aria-label="체력"></meter></div>
+      <div class="report-resource"><span>속도 범위</span><b>${unit.speed.join('~')}</b></div>
       ${mana}
       <div class="report-regen" title="다음 턴 시작에 적용되는 자연 회복량"><span>턴 종료 후 자연 마력 회복</span><b>${unit.manaRegen===undefined?'—':`+${unit.manaRegen}`}</b></div>
       ${condition}`;
@@ -314,10 +318,10 @@
       const idx=partyIds.indexOf(h.id);
       return `<button type="button" class="roster-item ${idx>=0?'active':''}" data-party="${esc(h.id)}"><span class="roster-symbol">${esc(h.symbol)}</span><span class="roster-copy"><strong>${esc(h.name)}</strong><small>${esc(h.role)} · 속도 ${h.speed.join('~')}</small></span><span class="roster-action">${idx>=0?`<b class="order-marker">${idx+1}</b> 편성됨`:'+ 추가'}</span></button>`;
     }).join('');
-    const slotCounts=distribute(partyIds.length);
+    const slotCounts=actionSlotCounts(partyIds.length,1);
     $('partyOrder').innerHTML=partyIds.map((id,i)=>{
       const h=originalHeroes.find((c:any)=>c.id===id);
-      return `<div class="order-item"><div class="order-number">${i+1}</div><div class="order-copy"><strong>${esc(h.symbol)} ${esc(h.name)}</strong><small>행동 슬롯 ${slotCounts[i]}개 · 첫 턴 ${slotCounts[i]+2}장</small></div><div class="order-buttons"><button data-move="${esc(id)}" data-direction="up" title="앞으로" ${i===0?'disabled':''}>↑</button><button data-move="${esc(id)}" data-direction="down" title="뒤로" ${i===partyIds.length-1?'disabled':''}>↓</button><button data-party="${esc(id)}" title="편성 제외">×</button></div></div>`;
+      return `<div class="order-item"><div class="order-number">${i+1}</div><div class="order-copy"><strong>${esc(h.symbol)} ${esc(h.name)}</strong><small>첫 턴 슬롯 ${slotCounts[i]}개 · 첫 턴 ${slotCounts[i]+2}장</small></div><div class="order-buttons"><button data-move="${esc(id)}" data-direction="up" title="앞으로" ${i===0?'disabled':''}>↑</button><button data-move="${esc(id)}" data-direction="down" title="뒤로" ${i===partyIds.length-1?'disabled':''}>↓</button><button data-party="${esc(id)}" title="편성 제외">×</button></div></div>`;
     }).join('');
   }
   function saveRaidProgress():void {
@@ -345,7 +349,7 @@
     $('raidBossName').textContent=entry?.name??`보스 ${bossIndex+1}`;
     $('raidBossStatus').textContent=!campaign.isUnlocked(progress,bossIndex,'OMEN')
       ?'잠김':entry?'개방':'전투 준비 중';
-    $('raidDifficulties').innerHTML=raidDifficulties.map(level=>{
+    $('raidDifficulties').innerHTML=raidDifficulties.filter(level=>level!=='OBLIVION'||campaign.isUnlocked(progress,bossIndex,level)).map(level=>{
       const unlocked=campaign.isUnlocked(progress,bossIndex,level);
       const status=campaign.isCleared(progress,bossIndex,level)?'클리어':!unlocked?'잠김':entry?.encounters[level]?'도전 가능':'개방 · 준비 중';
       return `<button type="button" data-difficulty="${level}" aria-pressed="${level===difficulty}"><strong>${level}</strong><span>${status}</span></button>`;
@@ -356,7 +360,7 @@
     $('chooseRaid').textContent=!unlocked?'잠김':configured?'출전 편성 →':'전투 준비 중';
     $('raidNotice').textContent=raidAnnouncement || (unlocked?'':!campaign.isUnlocked(progress,bossIndex,'OMEN')
       ?'이전 보스의 CALAMITY를 클리어하면 개방됩니다.'
-      :difficulty==='CALAMITY'?'이 보스의 OMEN을 클리어하면 개방됩니다.':'마지막 보스의 CALAMITY를 클리어하면 개방됩니다.');
+      :'이 보스의 OMEN을 클리어하면 개방됩니다.');
   }
   function raidMusic():HTMLAudioElement {
     return document.getElementById('raidBgm') as HTMLAudioElement;
@@ -489,7 +493,7 @@
     // UI-only sort: never mutate intent IDs, linked slot IDs or execution order.
     $('intents').innerHTML=sortSlotsBySpeed(game.boss.intents).map((x:any,i:number)=>{
       const pair:any=linked.get(x.id);
-      return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="적 슬롯 ${i+1}: ${esc(x.card.name)}, 속도 ${x.speed}, 위력 ${game.finalPower(game.boss,x.card)}"><span class="action-art">${slotIllustration(x.card,'✦')}</span></div></div>`;
+      return `<div class="boss-action-wrap"><span class="hex-speed enemy-hex">${x.speed}</span><div class="intent drop-intent ${pair?'linked':''}" role="button" tabindex="${planning?'0':'-1'}" data-intent="${esc(x.id)}" aria-label="적 슬롯 ${i+1}: ${x.card.enhanced?'강화 ':''}${esc(x.card.name)}, ${cardTypeLabel(x.card)}, 속도 ${x.speed}, 위력 ${game.finalPower(game.boss,x.card)}"><span class="action-art">${slotIllustration(x.card,'✦')}</span></div></div>`;
     }).join('');
     $('heroes').innerHTML=game.allies.map((u:Combatant)=>`<article class="battle-hero ${selected?.ownerId===u.id?'selected':''} ${u.hp<=0?'fallen':''}">
       <div class="hero-slots">${sortSlotsBySpeed(u.slots).map((s:any,i:number)=>{

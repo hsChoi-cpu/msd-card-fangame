@@ -96,12 +96,16 @@ declare const module: any;
   const PRACTICE_ENCOUNTER: BossEncounter = {
     name:'심연의 군주', maxHp:260, speed:[3,8], symbol:'👁️', moves:BOSS_MOVES,
     phaseFor:battle=>battle.boss.hp<=130?2:1,
-    slotCount:battle=>battle.phase===1?3:4,
     pickMove:battle=>{
       const pool=battle.phase===1?[0,0,1,2,2,4]:[0,1,1,2,3,3,4,5];
       return BOSS_MOVES[pool[battle.randint(0,pool.length-1)]];
     }
   };
+  function actionSlotCounts(partySize:number,turn:number,maxSlots=6,livingCount=partySize):number[] {
+    const total=Math.min(maxSlots,partySize+turn-1);
+    const base=Math.floor(total/livingCount), extra=total%livingCount;
+    return Array.from({length:livingCount},(_,index)=>base+(index<extra?1:0));
+  }
   const clamp = (n: number,min: number,max: number): number => Math.min(max,Math.max(min,n));
   const boundedKeyword = (n: number): number => clamp(Math.trunc(Number.isFinite(n)?n:0),0,99);
   const SINGLE=new Set(['CORROSION','PARALYSIS','DISTRACTION','MANA_BACKFLOW','MANA_LEAK','MANA_EFFICIENCY','REGEN','FOCUS','BLESSING','LIFESTEAL','LOCKDOWN','TAUNT']);
@@ -165,6 +169,7 @@ declare const module: any;
       // Keep card in hand during resolution so cardForSlot can resolve it;
       // commit the move to discard when the action resolves.
       slot._executingCard=c;
+      slot._paidMana=cost;
       this.note(`${hero.name}: 마력 -${cost} (${hero.mana}/${hero.maxMana})`);
       return true;
     }
@@ -202,8 +207,26 @@ declare const module: any;
 
     getUnit(id){return id==='boss'?this.boss:this.allies.find(u=>u.id===id);}
     kw(unit,id){return unit.keywords[id]?.potency||0;}
+    bossResource(unit:Combatant,id:KeywordId):BossResource|undefined {
+      return unit===this.boss&&Object.prototype.hasOwnProperty.call(this.encounter.resources??{},id)
+        ?this.encounter.resources[id]:undefined;
+    }
+    setBossResource(id:KeywordId,value:number):void {
+      const resource=this.bossResource(this.boss,id);
+      if(!resource)return;
+      this.boss.keywords[id]={potency:clamp(Math.trunc(value),resource.min,resource.max),count:null};
+    }
+    reserveKeyword(unit:Combatant,id:KeywordId,potency:number,count=1):void {
+      if(!unit||unit.hp<=0)return;
+      unit.pending.push({id,potency,count});
+      this.note(`${unit.name}: ${K[id]||id} ${potency} 예약 (다음 턴)`);
+    }
     apply(unit: Combatant,id: KeywordId,application: KeywordApplication={}) {
       if(!unit||unit.hp<=0)return;
+      if(this.bossResource(unit,id)){
+        if(application.sourceId===unit.id)this.setBossResource(id,this.kw(unit,id)+(application.potency??1));
+        return;
+      }
       if(id==='TAUNT'){
         // Most recent reservation always wins; no restoration if source dies.
         unit.pending=unit.pending.filter(p=>p.id!=='TAUNT');
@@ -259,7 +282,7 @@ declare const module: any;
         const old=unit.keywords[k.id];
         if(old){old.potency=boundedKeyword(old.potency+k.potency);old.count=boundedKeyword((old.count??0)+(k.count??0));}
         else unit.keywords[k.id]={potency:boundedKeyword(k.potency),count:k.count===null?null:boundedKeyword(k.count)};
-        this.note(`${unit.name}: 예약된 ${K[k.id]} ${k.potency} 활성화`);
+        this.note(`${unit.name}: 예약된 ${K[k.id]||k.id} ${k.potency} 활성화`);
       }
     }
     manaCost(unit:Combatant,c:CardDefinition):number {
@@ -388,24 +411,25 @@ declare const module: any;
       this.phase=this.encounter.phaseFor?.(this)??1;
       this.runLifecycleEffects('ON_TURN_START');
       for(const unit of [...this.allies,this.boss])this.passive(unit,'ON_TURN_START');
-      const count=this.allies.length;
-      const minimum=Math.floor(this.maxPartySize/count), extra=this.maxPartySize%count;
-      for(const [index,unit] of this.allies.entries()){
-        const slotCount=minimum+(index<extra?1:0);
-        unit.slots=unit.hp>0?Array.from({length:slotCount},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null})):[];
-        unit.usedThisTurn=0;
-        if(unit.hp>0){
-          const n=this.turn===1?unit.slots.length+2:unit.lastTurnUsed;
-          this.draw(unit,n);
-          this.replenishHand(unit);
-          this.note(`${unit.name}: ${n}장 드로우 요청 (손패 ${unit.hand.length}장)`);
-        }
+      const living=this.allies.filter(u=>u.hp>0);
+      if(!living.length){this.status='LOST';return;}
+      if(this.boss.hp<=0){this.status='WON';return;}
+      const slotCounts=actionSlotCounts(this.allies.length,this.turn,this.maxPartySize,living.length);
+      for(const unit of this.allies){unit.slots=[];unit.usedThisTurn=0;}
+      for(const [index,unit] of living.entries()){
+        unit.slots=Array.from({length:slotCounts[index]},(_,i)=>({id:`${unit.id}-t${this.turn}-s${i}`,ownerId:unit.id,speed:this.speedFor(unit),cardUid:null,targetIntentId:null}));
+        const n=this.turn===1?unit.slots.length+2:unit.lastTurnUsed;
+        this.draw(unit,n);
+        this.replenishHand(unit);
+        this.note(`${unit.name}: ${n}장 드로우 요청 (손패 ${unit.hand.length}장)`);
       }
       const taunter=this.getUnit(this.boss.keywords.TAUNT?.sourceId);
       const forcedTarget=taunter?.hp>0?taunter:null;
-      this.boss.intents=Array.from({length:this.encounter.slotCount(this)},(_,i)=>{
-        const m=copy(this.encounter.pickMove(this,i));
-        const living=this.allies.filter(a=>a.hp>0);
+      const bossSlots=slotCounts.reduce((sum,count)=>sum+count,0);
+      const planned=this.encounter.planMoves?.(this,bossSlots);
+      this.boss.intents=Array.from({length:bossSlots},(_,i)=>{
+        const move=planned?.[i]??this.encounter.pickMove?.(this,i)??this.encounter.moves[this.randint(0,this.encounter.moves.length-1)];
+        const m=copy(move);
         const target=m.type==='GUARD'?'boss':(forcedTarget??living[this.randint(0,living.length-1)])?.id??'boss';
         return {id:`boss-t${this.turn}-s${i}`,ownerId:'boss',speed:this.speedFor(this.boss),card:m,targetId:target};
       });
@@ -445,9 +469,10 @@ declare const module: any;
     }
     unlink(slotId){const slot=this.allies.flatMap(u=>u.slots).find(s=>s.id===slotId);if(slot)slot.targetIntentId=null;}
     finalPower(unit,c){
-      const typeBonus=(c.type==='ATTACK'||c.type==='MULTI_ATTACK')?this.kw(unit,'ATTACK_UP')-this.kw(unit,'ATTACK_DOWN'):
+      const bonus=unit===this.boss?this.encounter.cardModifiers?.(this,c):undefined;
+      const typeBonus=(c.type==='ATTACK'||c.type==='MULTI_ATTACK')?this.kw(unit,'ATTACK_UP')-this.kw(unit,'ATTACK_DOWN')+(bonus?.attack??0):
         ['GUARD','EVADE','COUNTER'].includes(c.type)?this.kw(unit,'DEFENSE_UP')-this.kw(unit,'DEFENSE_DOWN'):0;
-      return Math.max(0,c.power+typeBonus+this.kw(unit,'POWER_UP')-this.kw(unit,'POWER_DOWN')+(c.type==='SPECIAL'?0:this.kw(unit,'FOCUS')-this.kw(unit,'DISTRACTION')-10*(this.kw(unit,'PARALYSIS')>0?1:0))); 
+      return Math.max(0,c.power+typeBonus+(bonus?.power??0)+this.kw(unit,'POWER_UP')-this.kw(unit,'POWER_DOWN')+(c.type==='SPECIAL'?0:this.kw(unit,'FOCUS')-this.kw(unit,'DISTRACTION')-10*(this.kw(unit,'PARALYSIS')>0?1:0))); 
     }
     // Opt-in passive effects: only scope:'OWNED' subscriptions, once per card
     // definition per owner. Default card effects fire only when a card is used.
@@ -487,6 +512,10 @@ declare const module: any;
     modifyKeyword(unit: Combatant,id: KeywordId,change: KeywordApplication={}) {
       const current=unit?.keywords[id];
       if(!current)return;
+      if(this.bossResource(unit,id)){
+        this.setBossResource(id,current.potency+(change.potency??0));
+        return;
+      }
       if(change.potency!==undefined)current.potency=boundedKeyword(current.potency+change.potency);
       if(change.count!==undefined && current.count!=null)current.count=boundedKeyword(current.count+change.count);
       if(current.potency===0 || current.count===0){
@@ -526,12 +555,18 @@ declare const module: any;
       const destinations=this.resolveEffectTargets(fx.target,owner,target,extra);
       for(const dst of destinations) {
         if(!dst)continue;
+        const resource=fx.keyword?this.bossResource(dst,fx.keyword):undefined;
         switch(fx.action){
           case 'APPLY_KEYWORD':
             this.apply(dst,fx.keyword,{potency:fx.potency,count:fx.count,sourceId:owner.id});break;
           case 'MODIFY_KEYWORD':
+            if(resource&&owner!==dst)break;
             this.modifyKeyword(dst,fx.keyword,{potency:fx.potency,count:fx.count});break;
           case 'REMOVE_KEYWORD':
+            if(resource){
+              if(resource.min===0)this.setBossResource(fx.keyword,0);
+              break;
+            }
             delete dst.keywords[fx.keyword];
             if(fx.keyword==='EVADE')dst.evadeSource=null;
             this.note(`${dst.name}: ${K[fx.keyword]||fx.keyword} 제거`);break;
@@ -605,6 +640,7 @@ declare const module: any;
     }
     runEffects(c,trigger,owner,target,extra: any={}) {
       if(!c?.effects)return;
+      if(owner===this.boss&&!extra.passiveOnly)this.encounter.onEffect?.(this,c,trigger,target,extra);
       const effects=c.effects.map((fx,index)=>({fx,index}))
         .filter(({fx})=>fx.trigger===trigger && (!extra.passiveOnly || fx.scope==='OWNED') && (extra.passiveOnly || fx.scope!=='OWNED'))
         .sort((a,b)=>(b.fx.priority??0)-(a.fx.priority??0)||a.index-b.index);
@@ -741,7 +777,8 @@ declare const module: any;
       this.runEffects(c,'BEFORE_DAMAGE',attacker,target,{attacker});
       // Re-evaluate after BEFORE_DAMAGE effects so they can influence power.
       const damagePower=options.hitCount===1&&!options.isCounter?this.finalPower(attacker,c):(options.hitPower??this.finalPower(attacker,c));
-      const outgoing=Math.max(0,1+0.1*(this.kw(attacker,'DAMAGE_UP')-this.kw(attacker,'DAMAGE_DOWN')));
+      const bonus=attacker===this.boss?this.encounter.cardModifiers?.(this,c):undefined;
+      const outgoing=Math.max(0,1+0.1*(this.kw(attacker,'DAMAGE_UP')-this.kw(attacker,'DAMAGE_DOWN'))+(bonus?.damage??0));
       let critical=false;
       const breath=this.kw(attacker,'BREATH');
       if(breath>0 && c.type!=='GUARD'&&c.type!=='EVADE' && this.rng()<Math.min(1,breath*0.05)){
@@ -755,6 +792,7 @@ declare const module: any;
       const hpDamage=damage-blocked;
       target.hp=Math.max(0,target.hp-hpDamage);
       this.note(`${attacker.name} → ${target.name}: [${c.name}] 위력 ${damagePower}, 배율 ${multiplier.toFixed(2)}, 방어막 -${blocked}, 체력 -${hpDamage}`);
+      const defeatedByHit=target.hp===0;
       this.emit('HIT',{attackerId:attacker.id,targetId:target.id,cardId:c.id,hitIndex:options.hitIndex??0,damage,blocked,hpDamage,critical});
       if(this.kw(target,'RUPTURE')>0){
         const n=this.kw(target,'RUPTURE');
@@ -767,7 +805,7 @@ declare const module: any;
       }
       // ON_HIT occurs AFTER the current hit's damage. Newly applied
       // vulnerability affects only subsequent damage instances.
-      const extra={attacker,hpDamage,blocked,damage};
+      const extra={attacker,hpDamage,blocked,damage,defeatedByHit};
       this.runEffects(c,'ON_HIT',attacker,target,extra);
       this.passive(attacker,'ON_HIT',target,extra);
       for(const reaction of this.reactionCards(target))this.runEffects(reaction,'ON_HIT_TAKEN',target,attacker,extra);
@@ -800,10 +838,10 @@ declare const module: any;
       if(boss.hp<=0)return;
       this.note(`▸ SPD ${Math.max(allySlot.speed,intent.speed)}: ${hero.name} [${c.name}] ↔ 보스 [${intent.card.name}] 연결`);
       // The linked action runs at higher speed, even when ally slot itself is slower.
+      const paidMana=allySlot._paidMana??this.manaCost(hero,c);
       this.activate(c,hero,boss);
       this.activate(intent.card,boss,hero);
       if(c.type==='ATTACK'||c.type==='MULTI_ATTACK'){
-        const ap=this.finalPower(hero,c),bp=this.finalPower(boss,intent.card);
         this.runEffects(c,'ON_CLASH_START',hero,boss);
         this.runEffects(intent.card,'ON_CLASH_START',boss,hero);
         // After clash-start effects, recompute for clash.
@@ -820,7 +858,7 @@ declare const module: any;
           this.note('합 패배! 아군의 공격 취소');
           this.runEffects(c,'ON_CLASH_LOSE',hero,boss);
           this.passive(hero,'ON_CLASH_LOSE',boss);
-          this.runEffects(intent.card,'ON_CLASH_WIN',boss,hero);
+          this.runEffects(intent.card,'ON_CLASH_WIN',boss,hero,{paidMana});
           this.dealAttack(boss,hero,intent.card);
         }else{
           this.note('합 무승부! 양쪽 공격 모두 취소');
@@ -912,7 +950,7 @@ declare const module: any;
       for(const unit of [...this.allies,this.boss])this.passive(unit,'ON_TURN_END');
       for(const unit of [...this.allies,this.boss]){
         for(const [id,k] of Object.entries(unit.keywords)){
-          if(NO_DECAY.has(id)||['CORROSION','REGEN','PARALYSIS'].includes(id))continue;
+          if(this.bossResource(unit,id)||NO_DECAY.has(id)||['CORROSION','REGEN','PARALYSIS'].includes(id))continue;
           if(id==='MANA_BACKFLOW'){
             k.potency=Math.max(0,k.potency-1);
             if(!k.potency)delete unit.keywords[id];
@@ -960,7 +998,7 @@ declare const module: any;
     });
     return errors;
   }
-  const api={RaidBattle,HEROES,PASSIVES,BOSS_MOVES,K,T,passiveList,validateCard,boundedKeyword,sortSlotsBySpeed};
+  const api={RaidBattle,HEROES,PASSIVES,BOSS_MOVES,K,T,actionSlotCounts,passiveList,validateCard,boundedKeyword,sortSlotsBySpeed};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.RaidEngine=api;
 })(typeof window!=='undefined'?window:globalThis);

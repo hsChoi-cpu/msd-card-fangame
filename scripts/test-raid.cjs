@@ -56,10 +56,9 @@ const passive = {
 };
 const encounter = {
   name:'Fixture', maxHp:559, speed:[2,5], moves, passives:[passive],
-  slotCount:battle=>battle.turn===1?1:2,
   pickMove:(battle,index)=>moves[(index+battle.kw(battle.boss,'TEST_HUNGER')-1)%2]
 };
-const battle = new RaidBattle(()=>0,{encounter});
+const battle = new RaidBattle(()=>0,{encounter,partyIds:['knight']});
 assert.equal(battle.boss.id,'boss');
 assert.equal(battle.boss.hp,559);
 assert.equal(battle.boss.intents[0].speed,2);

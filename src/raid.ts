@@ -17,7 +17,7 @@ interface RaidProgress {
   const difficulties: readonly RaidDifficulty[] = ['OMEN', 'CALAMITY', 'OBLIVION'];
   // Each entry corresponds to one position, starting at 1 o'clock.
   const bosses: (RaidBossEntry | null)[] = [
-    null, null, null, null, null, null, null, null, null, null, null, null
+    root.AbaddonRaid ?? null, null, null, null, null, null, null, null, null, null, null, null
   ];
   const regularClearCount = bosses.length * 2;
 

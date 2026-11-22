@@ -10,12 +10,27 @@ interface KeywordApplication {potency?:number;count?:number;sourceId?:string}
 interface PendingKeyword extends KeywordInstance {id:KeywordId}
 interface EffectAction {action:EffectCommand;target?:EffectTarget;keyword?:KeywordId;potency?:number;count?:number;value?:number;selection?:'RANDOM'|'CHOOSE';cardUids?:string[];cardUid?:string;card?:CardDefinition;destination?:'HAND'|'DECK'|'DISCARD';recycleGenerated?:boolean;ignoreMitigation?:boolean;ignoreShield?:boolean}
 interface CardEffect extends Partial<EffectAction> {trigger:EffectTrigger;scope?:'OWNED';priority?:number;conditions?:Array<Record<string,any>>;actions?:EffectAction[]}
-interface CardDefinition {id:string;name:string;type:CardType;power:number;manaCost?:number;description?:string;effects:CardEffect[];uid?:string;image?:string|null;hitCount?:number;generated?:boolean;recycleGenerated?:boolean;costModifier?:number;specialTarget?:'SELF'|'ALLY'|'ENEMY'|'ANY'}
+interface CardDefinition {id:string;name:string;type:CardType;power:number;manaCost?:number;description?:string;effects:CardEffect[];uid?:string;image?:string|null;hitCount?:number;generated?:boolean;recycleGenerated?:boolean;costModifier?:number;enhanced?:boolean;specialTarget?:'SELF'|'ALLY'|'ENEMY'|'ANY'}
 interface HeroTemplate {id:string;name:string;role:string;symbol:string;maxHp:number;speed:number[];color:string;deck:CardDefinition[];portrait?:string;sprite?:string}
 interface BattleEvent {type:string;turn:number;order:number;[key:string]:any}
 // UI and battle logic share the following run-time shape; further refinement is safe as rules stabilize.
 interface Combatant {id:string;name:string;hp:number;maxHp:number;speed:number[];keywords:Record<string,KeywordInstance>;pending:PendingKeyword[];counter:any;evadeSource:any;deck?:CardDefinition[];hand?:CardDefinition[];discard?:CardDefinition[];exhaust?:CardDefinition[];slots?:any[];intents?:any[];role?:string;symbol?:string;color?:string;portrait?:string;sprite?:string;maxMana?:number;mana?:number;manaRegen?:number;usedThisTurn?:number;lastTurnUsed?:number;passive?:CardDefinition;passives?:CardDefinition[];[key:string]:any}
 
+interface BossResource {
+  name: string;
+  tooltip: string;
+  min: number;
+  max: number;
+}
+interface BossCardModifiers {
+  power?: number;
+  attack?: number;
+  damage?: number;
+}
+interface BossEffectContext {
+  paidMana?: number;
+  defeatedByHit?: boolean;
+}
 interface BossBattleContext {
   boss: Combatant;
   allies: Combatant[];
@@ -23,6 +38,10 @@ interface BossBattleContext {
   phase: number;
   randint(min: number, max: number): number;
   kw(unit: Combatant, id: KeywordId): number;
+  setBossResource(id: KeywordId, value: number): void;
+  reserveKeyword(unit: Combatant, id: KeywordId, potency: number, count?: number): void;
+  executeEffectAction(effect: EffectAction, owner: Combatant, target: Combatant): void;
+  note(message: string): void;
 }
 
 interface BossEncounter {
@@ -35,6 +54,9 @@ interface BossEncounter {
   sprite?: string;
   passives?: CardDefinition[];
   phaseFor?: (battle: BossBattleContext) => number;
-  slotCount: (battle: BossBattleContext) => number;
-  pickMove: (battle: BossBattleContext, slotIndex: number) => CardDefinition;
+  resources?: Record<string, BossResource>;
+  pickMove?: (battle: BossBattleContext, slotIndex: number) => CardDefinition;
+  planMoves?: (battle: BossBattleContext, slotCount: number) => CardDefinition[];
+  cardModifiers?: (battle: BossBattleContext, card: CardDefinition) => BossCardModifiers;
+  onEffect?: (battle: BossBattleContext, card: CardDefinition, trigger: EffectTrigger, target: Combatant, extra: BossEffectContext) => void;
 }

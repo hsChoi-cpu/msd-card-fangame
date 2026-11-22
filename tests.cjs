@@ -229,18 +229,25 @@ test('V5 모든 캐릭터 덱은 10장, 6종 카드',()=>{
     assert.ok(hero.deck.every(c=>Number.isInteger(c.manaCost)&&c.manaCost>=0));
   }
 });
-test('V5 출전 1~6명 슬롯 배분과 첫 턴 슬롯+2 드로우',()=>{
+test('V6.5 출전 1~6명 양측 슬롯 증가, 편성 순환 및 첫 턴 드로우',()=>{
   for(let n=1;n<=6;n++){
     const g=new RaidBattle(()=>.4,{partyIds:HEROES.slice(0,n).map(h=>h.id)});
-    const expected=Array.from({length:n},(_,i)=>Math.floor(6/n)+(i<6%n?1:0));
-    assert.deepEqual(g.allies.map(h=>h.slots.length),expected);
-    assert.deepEqual(g.allies.map(h=>h.hand.length),expected.map(x=>x+2));
-    assert.equal(g.allies.reduce((sum,h)=>sum+h.slots.length,0),6);
+    assert.deepEqual(g.allies.map(h=>h.hand.length),Array(n).fill(3));
+    for(let turn=1;turn<=6;turn++){
+      const total=Math.min(6,n+turn-1);
+      const expected=Array.from({length:n},(_,i)=>Math.floor(total/n)+(i<total%n?1:0));
+      assert.deepEqual(g.allies.map(h=>h.slots.length),expected);
+      assert.equal(g.boss.intents.length,total);
+      g.startTurn();
+    }
   }
 });
-test('V5 4명 출전 시 2/2/1/1 슬롯',()=>{
-  const g=new RaidBattle(()=>.4,{partyIds:HEROES.slice(0,4).map(h=>h.id)});
-  assert.deepEqual(g.allies.map(h=>h.slots.length),[2,2,1,1]);
+test('V6.5 전투 불능 슬롯 제외 및 다음 턴 생존자 순환 배분',()=>{
+  const g=make();
+  g.allies[0].hp=0;
+  g.startTurn();
+  assert.deepEqual(g.allies.map(h=>h.slots.length),[0,2,2]);
+  assert.equal(g.boss.intents.length,4);
 });
 test('V5 잘못된 편성(중복, 초과, 미등록)을 거부',()=>{
   assert.throws(()=>new RaidBattle(()=>.4,{partyIds:['knight','knight']}));
@@ -275,7 +282,7 @@ test('V5 카드 드로우 중 덱이 바닥나면 버림 더미 재셔플',()=>{
   assert.equal(a.deck.length,0);assert.equal(a.discard.length,0);
 });
 test('V5 카드 예약 비용 합계 초과 시 배치 거부',()=>{
-  const g=make(),a=g.allies[0];
+  const g=make(),a=g.allies[0];g.startTurn();
   a.mana=2;
   a.hand[0].manaCost=2;a.hand[1].manaCost=2;
   assert.equal(g.assignCard(a.slots[0].id,a.hand[0].uid).ok,true);
@@ -283,7 +290,7 @@ test('V5 카드 예약 비용 합계 초과 시 배치 거부',()=>{
   assert.equal(a.slots[1].cardUid,null);
 });
 test('V5 같은 카드를 다른 슬롯으로 이동하면 비용 중복 예약하지 않음',()=>{
-  const g=make(),a=g.allies[0];a.mana=2;a.hand[0].manaCost=2;
+  const g=make(),a=g.allies[0];g.startTurn();a.mana=2;a.hand[0].manaCost=2;
   assert.equal(g.assignCard(a.slots[0].id,a.hand[0].uid).ok,true);
   assert.equal(g.assignCard(a.slots[1].id,a.hand[0].uid).ok,true);
   assert.equal(g.totalPlannedMana(a),2);
